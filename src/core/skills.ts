@@ -1,0 +1,135 @@
+import type { ClassId, Stats } from "./stats";
+
+export type SkillId =
+  // Warrior
+  | "heavyStrike" | "bloodlust" | "ironSkin" | "shieldBash" | "berserk" | "thorns" | "secondWind" | "charge"
+  // Ranger
+  | "multishot" | "poison" | "eagleEye" | "knockback" | "rapidFire" | "evasion" | "headshot" | "snare"
+  // Mage
+  | "fireball" | "frostNova" | "static" | "manaShield" | "arcane" | "ignite" | "timeWarp" | "meteor"
+  // Shared
+  | "vitality" | "might" | "swiftness" | "regeneration" | "lucky" | "vampirism" | "fortify" | "executioner";
+
+export type SkillKind = "passive" | "proc" | "active";
+
+export interface SkillDef {
+  id: SkillId;
+  name: string;
+  icon: string;
+  cls: ClassId | "any";
+  kind: SkillKind;
+  /** Description at a given level (1-based). */
+  desc: (lv: number) => string;
+  /** Stat changes; proc and active effects live in the battle sim. */
+  apply?: (s: Stats, lv: number) => void;
+}
+
+export const MAX_LEVEL = 3;
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+/** Numbers shared by the descriptions and the battle sim so they can't drift apart. */
+export const SKILL_NUM = {
+  heavyStrike: (lv: number) => ({ every: lv >= 3 ? 3 : 4, mult: 2 + 0.5 * lv }),
+  bloodlust: (lv: number) => 0.06 + 0.04 * lv,
+  shieldBash: (lv: number) => ({ cd: 6, stun: 0.8 + 0.4 * lv, mult: 1 + 0.5 * lv }),
+  berserk: (lv: number) => 0.4 * lv,
+  thorns: (lv: number) => 0.15 + 0.15 * lv,
+  secondWind: (lv: number) => 0.25 + 0.15 * lv,
+  charge: (lv: number) => ({ mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
+  multishot: (lv: number) => ({ arrows: lv, mult: 0.5 }),
+  poison: (lv: number) => ({ dps: 1 + 1.5 * lv, dur: 4, maxStacks: 3 + 2 * lv }),
+  knockback: (lv: number) => ({ chance: 0.25 + 0.1 * lv, dist: 1.5 }),
+  headshot: (lv: number) => ({ cd: 8 - lv, mult: 3 + lv }),
+  snare: (lv: number) => 1 + 0.75 * lv,
+  fireball: (lv: number) => ({ cd: 4, mult: 2 + lv, burn: 2 + 2 * lv }),
+  frostNova: (lv: number) => ({ cd: 9 - lv, freeze: 1.2 + 0.5 * lv, mult: 1 }),
+  static: (lv: number) => ({ chance: 0.15 + 0.1 * lv, mult: 1.5 }),
+  manaShield: (lv: number) => ({ shield: 0.15 + 0.1 * lv, refill: 8 }),
+  ignite: (lv: number) => ({ durMult: 1 + 0.5 * lv, dmgMult: 1 + 0.25 * lv }),
+  meteor: (lv: number) => ({ cd: 14 - 2 * lv, mult: 5 + 2 * lv }),
+  executioner: (lv: number) => ({ below: 0.3, mult: 1.25 + 0.25 * lv }),
+};
+
+const S = SKILL_NUM;
+
+export const SKILLS: Record<SkillId, SkillDef> = {
+  heavyStrike: { id: "heavyStrike", name: "Heavy Strike", icon: "🔨", cls: "warrior", kind: "proc",
+    desc: (lv) => `Every ${S.heavyStrike(lv).every}th hit deals ×${S.heavyStrike(lv).mult}.` },
+  bloodlust: { id: "bloodlust", name: "Bloodlust", icon: "🩸", cls: "warrior", kind: "proc",
+    desc: (lv) => `Heal ${pct(S.bloodlust(lv))} of damage you deal.` },
+  ironSkin: { id: "ironSkin", name: "Iron Skin", icon: "🛡️", cls: "warrior", kind: "passive",
+    desc: (lv) => `Take ${pct(0.1 * lv + 0.05)} less damage.`, apply: (s, lv) => { s.dmgTaken *= 1 - (0.1 * lv + 0.05); } },
+  shieldBash: { id: "shieldBash", name: "Shield Bash", icon: "💥", cls: "warrior", kind: "active",
+    desc: (lv) => `Every ${S.shieldBash(lv).cd}s: hit ×${S.shieldBash(lv).mult} and stun ${S.shieldBash(lv).stun}s.` },
+  berserk: { id: "berserk", name: "Berserk", icon: "😤", cls: "warrior", kind: "passive",
+    desc: (lv) => `Up to +${pct(S.berserk(lv))} attack speed as your HP drops.` },
+  thorns: { id: "thorns", name: "Thorns", icon: "🌵", cls: "warrior", kind: "proc",
+    desc: (lv) => `Reflect ${pct(S.thorns(lv))} of damage taken.` },
+  secondWind: { id: "secondWind", name: "Second Wind", icon: "🌬️", cls: "warrior", kind: "proc",
+    desc: (lv) => `Once per fight, at 30% HP heal ${pct(S.secondWind(lv))}.` },
+  charge: { id: "charge", name: "Charge", icon: "🐂", cls: "warrior", kind: "proc",
+    desc: (lv) => `First hit deals ×${S.charge(lv).mult} and stuns ${S.charge(lv).stun}s. Move faster.`,
+    apply: (s) => { s.speed += 2; } },
+
+  multishot: { id: "multishot", name: "Multishot", icon: "🎯", cls: "ranger", kind: "proc",
+    desc: (lv) => `Fire ${S.multishot(lv).arrows} extra arrow(s) at ${pct(S.multishot(lv).mult)} damage.` },
+  poison: { id: "poison", name: "Poison Arrows", icon: "🧪", cls: "ranger", kind: "proc",
+    desc: (lv) => `Hits add poison: ${S.poison(lv).dps}/s for ${S.poison(lv).dur}s, stacks ${S.poison(lv).maxStacks}×.` },
+  eagleEye: { id: "eagleEye", name: "Eagle Eye", icon: "🦅", cls: "ranger", kind: "passive",
+    desc: (lv) => `+${pct(0.1 * lv + 0.05)} crit chance, +1 range.`, apply: (s, lv) => { s.crit += 0.1 * lv + 0.05; s.range += 1; } },
+  knockback: { id: "knockback", name: "Knockback", icon: "💨", cls: "ranger", kind: "proc",
+    desc: (lv) => `${pct(S.knockback(lv).chance)} chance a hit pushes the mob back.` },
+  rapidFire: { id: "rapidFire", name: "Rapid Fire", icon: "⚡", cls: "ranger", kind: "passive",
+    desc: (lv) => `+${pct(0.2 * lv)} attack speed.`, apply: (s, lv) => { s.interval /= 1 + 0.2 * lv; } },
+  evasion: { id: "evasion", name: "Evasion", icon: "🍃", cls: "ranger", kind: "passive",
+    desc: (lv) => `+${pct(0.1 * lv + 0.05)} dodge.`, apply: (s, lv) => { s.dodge += 0.1 * lv + 0.05; } },
+  headshot: { id: "headshot", name: "Headshot", icon: "☠️", cls: "ranger", kind: "active",
+    desc: (lv) => `Every ${S.headshot(lv).cd}s: an arrow for ×${S.headshot(lv).mult}.` },
+  snare: { id: "snare", name: "Snare Trap", icon: "🪤", cls: "ranger", kind: "proc",
+    desc: (lv) => `A trap roots the mob for ${S.snare(lv)}s as it approaches.` },
+
+  fireball: { id: "fireball", name: "Fireball", icon: "🔥", cls: "mage", kind: "active",
+    desc: (lv) => `Every ${S.fireball(lv).cd}s: ×${S.fireball(lv).mult} damage and burn ${S.fireball(lv).burn}/s for 3s.` },
+  frostNova: { id: "frostNova", name: "Frost Nova", icon: "❄️", cls: "mage", kind: "active",
+    desc: (lv) => `Every ${S.frostNova(lv).cd}s: freeze the mob for ${S.frostNova(lv).freeze}s.` },
+  static: { id: "static", name: "Static Charge", icon: "🌩️", cls: "mage", kind: "proc",
+    desc: (lv) => `${pct(S.static(lv).chance)} chance a hit adds a ×${S.static(lv).mult} lightning bolt.` },
+  manaShield: { id: "manaShield", name: "Mana Shield", icon: "🔵", cls: "mage", kind: "proc",
+    desc: (lv) => `Barrier of ${pct(S.manaShield(lv).shield)} max HP, refills every ${S.manaShield(lv).refill}s.` },
+  arcane: { id: "arcane", name: "Arcane Power", icon: "✨", cls: "mage", kind: "passive",
+    desc: (lv) => `+${pct(0.25 * lv)} spell damage.`, apply: (s, lv) => { s.spellPower += 0.25 * lv; } },
+  ignite: { id: "ignite", name: "Ignite", icon: "🌋", cls: "mage", kind: "passive",
+    desc: (lv) => `Burns last ×${S.ignite(lv).durMult} longer and hurt ×${S.ignite(lv).dmgMult}. Bolts burn too.` },
+  timeWarp: { id: "timeWarp", name: "Time Warp", icon: "⏳", cls: "mage", kind: "passive",
+    desc: (lv) => `Spell cooldowns −${pct(0.15 * lv)}.`, apply: (s, lv) => { s.cdMult *= 1 - 0.15 * lv; } },
+  meteor: { id: "meteor", name: "Meteor", icon: "☄️", cls: "mage", kind: "active",
+    desc: (lv) => `Every ${S.meteor(lv).cd}s: ×${S.meteor(lv).mult} damage.` },
+
+  vitality: { id: "vitality", name: "Vitality", icon: "❤️", cls: "any", kind: "passive",
+    desc: (lv) => `+${pct(0.25 * lv)} max HP.`, apply: (s, lv) => { s.maxHp = Math.round(s.maxHp * (1 + 0.25 * lv)); } },
+  might: { id: "might", name: "Might", icon: "💪", cls: "any", kind: "passive",
+    desc: (lv) => `+${pct(0.15 * lv)} damage.`, apply: (s, lv) => { s.dmg *= 1 + 0.15 * lv; } },
+  swiftness: { id: "swiftness", name: "Swiftness", icon: "👟", cls: "any", kind: "passive",
+    desc: (lv) => `+${pct(0.12 * lv)} attack speed, faster movement.`, apply: (s, lv) => { s.interval /= 1 + 0.12 * lv; s.speed += 0.5 * lv; } },
+  regeneration: { id: "regeneration", name: "Regeneration", icon: "🌿", cls: "any", kind: "passive",
+    desc: (lv) => `Regenerate ${pct(0.01 * lv + 0.005)} max HP per second.`, apply: (s, lv) => { s.regen += 0.01 * lv + 0.005; } },
+  lucky: { id: "lucky", name: "Lucky", icon: "🍀", cls: "any", kind: "passive",
+    desc: (lv) => `+${pct(0.08 * lv)} crit chance, +${pct(0.25 * lv)} crit damage.`, apply: (s, lv) => { s.crit += 0.08 * lv; s.critMult += 0.25 * lv; } },
+  vampirism: { id: "vampirism", name: "Vampirism", icon: "🧛", cls: "any", kind: "passive",
+    desc: (lv) => `${pct(0.04 * lv)} lifesteal on all damage.`, apply: (s, lv) => { s.lifesteal += 0.04 * lv; } },
+  fortify: { id: "fortify", name: "Fortify", icon: "🧱", cls: "any", kind: "passive",
+    desc: (lv) => `+${2 * lv} armor (blocks flat damage per hit).`, apply: (s, lv) => { s.armor += 2 * lv; } },
+  executioner: { id: "executioner", name: "Executioner", icon: "🪓", cls: "any", kind: "proc",
+    desc: (lv) => `×${S.executioner(lv).mult} damage to mobs under ${pct(S.executioner(lv).below)} HP.` },
+};
+
+export type SkillLevels = Partial<Record<SkillId, number>>;
+
+export function heroStats(base: Stats, levels: SkillLevels): Stats {
+  const s = { ...base };
+  for (const [id, lv] of Object.entries(levels) as [SkillId, number][]) {
+    SKILLS[id].apply?.(s, lv);
+  }
+  return s;
+}
