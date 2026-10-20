@@ -1,24 +1,24 @@
 import { expect, it } from "vitest";
-import { botOpponent, lossDamage, neutralOpponent } from "../src/core/game";
-import { Battle } from "../src/core/combat";
-import { RULES } from "../src/core/data";
+import { chooseSkill, finishBattle, newRun, startBattle } from "../src/core/run";
+import { Rng } from "../src/core/rng";
+import type { ClassId } from "../src/core/stats";
 
-// A bot-skill "player" against bot rivals should usually survive a while:
-// guards against balance changes that make runs end in a few rounds.
-it("an average player survives several rounds", () => {
-  const lengths: number[] = [];
-  for (let seed = 100; seed < 112; seed++) {
-    let hp = RULES.startHp;
-    let round = 1;
-    for (; round <= RULES.finalRound && hp > 0; round++) {
-      const me = botOpponent(seed, round).units;
-      const foe = round <= RULES.neutralRounds ? neutralOpponent(round) : botOpponent(seed * 7 + 1, round);
-      const b = new Battle(me, foe.units);
-      if (b.runToEnd() === "loss") hp -= lossDamage(round, b.survivingThreat("enemy"));
-    }
-    lengths.push(hp > 0 ? RULES.finalRound + 1 : round - 1);
+/** A player who picks a random offered skill each round. Returns rounds won. */
+export function randomRun(cls: ClassId, seed: number, cap = 40): number {
+  const s = newRun(seed, cls);
+  const rng = new Rng(seed);
+  while (s.phase !== "over" && s.round <= cap) {
+    chooseSkill(s, rng.pick(s.offers));
+    finishBattle(s, startBattle(s).runToEnd() === "win");
   }
-  const avg = lengths.reduce((a, b) => a + b, 0) / lengths.length;
-  console.log("run lengths", lengths.join(","), "avg", avg.toFixed(1));
-  expect(avg).toBeGreaterThanOrEqual(7);
+  return s.round - 1;
+}
+
+// Guards balance: random picks should get a few wins but not run forever, for every class.
+it.each(["warrior", "ranger", "mage"] as ClassId[])("%s: random-pick runs last a reasonable number of rounds", (cls) => {
+  const wins = Array.from({ length: 40 }, (_, i) => randomRun(cls, 1000 + i));
+  const avg = wins.reduce((a, b) => a + b, 0) / wins.length;
+  console.log(cls, "avg wins", avg.toFixed(1), "min", Math.min(...wins), "max", Math.max(...wins));
+  expect(avg).toBeGreaterThanOrEqual(5);
+  expect(avg).toBeLessThanOrEqual(20);
 });

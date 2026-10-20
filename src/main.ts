@@ -1,356 +1,252 @@
-import { BUILDINGS, CLANS, RULES, TERRAIN_INFO, UNITS, type ClanId, type UnitKind } from "./core/data";
-import { cloneBoard, income, place, placementError, tileYield } from "./core/board";
+import type { Battle } from "./core/battle";
+import { MAX_LEVEL, SKILLS, type SkillId, type SkillKind } from "./core/skills";
+import { CLASSES, type ClassId, type Stats } from "./core/stats";
 import {
-  buy,
-  cancelPending,
-  endBuild,
-  fateCard,
-  fight,
-  lossDamage,
+  chooseSkill,
+  currentMob,
+  currentStats,
+  finishBattle,
   newRun,
-  placePending,
-  playerWarband,
   reroll,
-  resolveBattle,
-  takeFate,
+  startBattle,
   type RunState,
-} from "./core/game";
-import type { Battle } from "./core/combat";
+} from "./core/run";
 import { playBattle } from "./ui/battleView";
-import { findGhost, saveGhost } from "./ui/ghosts";
 
 const app = document.getElementById("app")!;
 
 let run: RunState | null = null;
-let hoverTile: number | null = null;
-let toast = "";
 let battle: Battle | null = null;
 let stopBattle: (() => void) | null = null;
 let battleSpeed = 1;
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
-const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+const BEST_KEY = "fjord-best-v2";
 
-function render(): void {
-  if (!run) return renderClanSelect();
-  if (run.phase === "battle" && battle) return renderBattleOverlay();
-  app.innerHTML = `
-    ${header(run)}
-    <main class="layout">
-      <section class="board-wrap">${board(run)}${tileInfo(run)}</section>
-      <aside class="panel">${panel(run)}</aside>
-    </main>
-    ${toast ? `<div class="toast">${esc(toast)}</div>` : ""}
-  `;
+function loadBest(): Partial<Record<ClassId, number>> {
+  try {
+    return JSON.parse(localStorage.getItem(BEST_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
 }
 
-function renderClanSelect(): void {
+function saveBest(cls: ClassId, wins: number): void {
+  try {
+    const best = loadBest();
+    if (wins > (best[cls] ?? 0)) localStorage.setItem(BEST_KEY, JSON.stringify({ ...best, [cls]: wins }));
+  } catch {
+    // Records are a nicety; ignore storage failures.
+  }
+}
+
+const KIND_LABEL: Record<SkillKind, string> = { passive: "Passive", proc: "On hit", active: "Active" };
+
+function render(): void {
+  if (!run) return renderTitle();
+  if (run.phase === "choose") return renderChoose(run);
+  if (run.phase === "battle") return renderBattle(run);
+  return renderOver(run);
+}
+
+function renderTitle(): void {
+  const best = loadBest();
   app.innerHTML = `
     <div class="title-screen">
       <h1>⚔️ Fjord Battlegrounds</h1>
-      <p class="sub">Build a Viking settlement. Every round your warband fights another clan. Survive ${RULES.finalRound} rounds.</p>
-      <h2>Choose your clan</h2>
-      <div class="cards">
-        ${(Object.keys(CLANS) as ClanId[])
+      <p class="sub">Pick a skill. Beat the mob. Each win brings a stronger one. One loss and it's over.</p>
+      <div class="cards three">
+        ${(Object.keys(CLASSES) as ClassId[])
           .map((id) => {
-            const c = CLANS[id];
-            return `<button class="card clan" data-action="clan" data-id="${id}">
-              <div class="big">${c.icon}</div><b>${c.name}</b><span>${c.desc}</span></button>`;
+            const c = CLASSES[id];
+            return `<button class="card clan" data-action="class" data-id="${id}">
+              <div class="big">${c.icon}</div>
+              <b>${c.name}</b><small class="tag">${c.role}</small>
+              <span>${c.desc}</span>
+              <span class="muted">${statLine(c.base)}</span>
+              ${best[id] ? `<span class="best">Best: round ${best[id]! + 1}</span>` : ""}
+            </button>`;
           })
           .join("")}
       </div>
-      <details class="howto"><summary>How to play</summary>
-        <ol>
-          <li><b>Build:</b> buy buildings with 🪵 wood and place them next to your settlement. Adjacent terrain and buildings boost them.</li>
-          <li><b>Feed:</b> 🍖 food is your army supply. Units beyond it stay home.</li>
-          <li><b>Fate:</b> spend 📜 lore on a blessing from Odin, Thor or Baldr. Blessings last the whole run.</li>
-          <li><b>Battle:</b> your warband auto-fights draugr raiders, then rival clans. Losing costs ❤️, more for later rounds and for each enemy left standing.</li>
-        </ol>
-      </details>
     </div>`;
 }
 
+function statLine(s: Stats): string {
+  return `❤️ ${Math.round(s.maxHp)} · ⚔️ ${s.dmg.toFixed(0)} · ${(1 / s.interval).toFixed(2)}/s · 📏 ${s.range}`;
+}
+
 function header(s: RunState): string {
-  const inc = income(s.board, s.mods);
-  const wb = playerWarband(s);
-  return `
-    <header class="hud">
-      <span>${CLANS[s.clan].icon} ${CLANS[s.clan].name}</span>
-      <span>Round <b>${s.round}</b>/${RULES.finalRound}</span>
-      <span title="Health">❤️ <b>${s.hp}</b></span>
-      <span title="Wood (income next round)">🪵 <b>${s.wood}</b> <small>${signed(inc.wood)}/rd</small></span>
-      <span title="Food supply used / available">🍖 <b>${wb.supplyUsed}</b>/${wb.supplyCap}</span>
-      <span title="Lore (income next round)">📜 <b>${s.lore}</b> <small>${signed(inc.lore)}/rd</small></span>
-    </header>`;
+  const c = CLASSES[s.cls];
+  return `<header class="hud">
+    <span>${c.icon} <b>${c.name}</b></span>
+    <span>Round <b>${s.round}</b></span>
+    <span>Wins <b>${s.round - 1}</b></span>
+    ${loadBest()[s.cls] !== undefined ? `<span class="muted">Best: round ${loadBest()[s.cls]! + 1}</span>` : ""}
+  </header>`;
 }
 
-function board(s: RunState): string {
-  const cells = s.board.tiles
-    .map((t, i) => {
-      const classes = ["tile", t.terrain];
-      let preview = "";
-      if (s.pending) {
-        const err = placementError(s.board, i, s.pending);
-        classes.push(err ? "invalid" : "valid");
-        if (!err && hoverTile === i) {
-          const trial = cloneBoard(s.board);
-          place(trial, i, s.pending);
-          const a = income(s.board, s.mods);
-          const b = income(trial, s.mods);
-          const parts = [
-            b.wood - a.wood && `🪵${signed(b.wood - a.wood)}`,
-            b.food - a.food && `🍖${signed(b.food - a.food)}`,
-            b.lore - a.lore && `📜${signed(b.lore - a.lore)}`,
-          ].filter(Boolean);
-          preview = `<span class="preview">${parts.join(" ") || BUILDINGS[s.pending].icon}</span>`;
-        }
-      }
-      if (hoverTile === i) classes.push("hover");
-      const icon = t.building ? BUILDINGS[t.building].icon : TERRAIN_INFO[t.terrain].icon;
-      return `<div class="${classes.join(" ")}" data-tile="${i}">
-        <span class="${t.building ? "bld" : "ter"}">${icon}</span>${preview}</div>`;
-    })
+function heroPanel(s: RunState): string {
+  const st = currentStats(s);
+  const rows: [string, string][] = [
+    ["❤️ HP", `${Math.round(st.maxHp)}`],
+    ["⚔️ Damage", st.dmg.toFixed(1)],
+    ["⏱️ Attacks/s", (1 / st.interval).toFixed(2)],
+    ["📏 Range", st.range.toFixed(1)],
+    ["🎯 Crit", `${Math.round(st.crit * 100)}% ×${st.critMult.toFixed(2)}`],
+    ["🛡️ Armor", `${st.armor}${st.dmgTaken < 1 ? ` · −${Math.round((1 - st.dmgTaken) * 100)}% dmg` : ""}`],
+  ];
+  if (st.dodge) rows.push(["🍃 Dodge", `${Math.round(st.dodge * 100)}%`]);
+  if (st.lifesteal) rows.push(["🧛 Lifesteal", `${Math.round(st.lifesteal * 100)}%`]);
+  if (st.regen) rows.push(["🌿 Regen", `${(st.regen * 100).toFixed(1)}%/s`]);
+  if (st.spellPower !== 1) rows.push(["✨ Spell power", `×${st.spellPower.toFixed(2)}`]);
+  const owned = (Object.entries(s.levels) as [SkillId, number][])
+    .map(([id, lv]) => `<span class="chip" title="${SKILLS[id].desc(lv)}">${SKILLS[id].icon} ${SKILLS[id].name} <b>${lv}</b></span>`)
     .join("");
-  return `<div class="board" style="--n:${s.board.size}">${cells}</div>`;
+  return `<section class="panel hero">
+    <h3>${CLASSES[s.cls].icon} Your hero</h3>
+    <dl class="stats">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+    <h3>Skills</h3>
+    <div class="chips">${owned || "<span class='muted'>None yet.</span>"}</div>
+  </section>`;
 }
 
-function tileInfo(s: RunState): string {
-  if (hoverTile === null) return `<div class="tile-info muted">Hover a tile for details.</div>`;
-  const t = s.board.tiles[hoverTile];
-  const terr = TERRAIN_INFO[t.terrain].name;
-  if (!t.building) {
-    const err = s.pending ? placementError(s.board, hoverTile, s.pending) : null;
-    return `<div class="tile-info"><b>${terr}</b>${err ? ` <span class="bad">· ${esc(err)}</span>` : ""}</div>`;
-  }
-  const def = BUILDINGS[t.building];
-  const y = tileYield(s.board, hoverTile, s.mods);
-  const out = [y.wood && `🪵${y.wood}`, y.food && `🍖${y.food}`, y.lore && `📜${y.lore}`].filter(Boolean).join(" ");
-  return `<div class="tile-info"><b>${def.icon} ${def.name}</b> on ${terr}${out ? ` · makes ${out}` : ""}<br><span class="muted">${def.desc}</span></div>`;
+function mobPanel(s: RunState): string {
+  const { def, stats } = currentMob(s);
+  return `<section class="panel mob ${def.boss ? "boss" : ""}">
+    <h3>Next: round ${s.round}${def.boss ? " · BOSS" : ""}</h3>
+    <div class="mob-row"><span class="mob-icon">${def.icon}</span>
+      <div><b>${def.name}</b><br><span class="muted">${def.trait}</span><br>
+      ❤️ ${stats.maxHp} · ⚔️ ${stats.dmg.toFixed(0)} · 📏 ${stats.range}${stats.armor ? ` · 🛡️ ${stats.armor}` : ""}</div>
+    </div>
+  </section>`;
 }
 
-function panel(s: RunState): string {
-  switch (s.phase) {
-    case "build":
-      return buildPanel(s);
-    case "fate":
-      return fatePanel(s);
-    case "battle":
-      return battlePanel(s);
-    case "won":
-    case "lost":
-      return endPanel(s);
-  }
-}
-
-function warbandSummary(s: RunState): string {
-  const wb = playerWarband(s);
-  const counts = new Map<UnitKind, number>();
-  wb.units.forEach((u) => counts.set(u.kind, (counts.get(u.kind) ?? 0) + 1));
-  const list = [...counts].map(([k, n]) => `${UNITS[k].icon}×${n}`).join(" ") || "<span class='muted'>no units yet</span>";
-  return `<div class="warband"><h3>Warband</h3>${list}${wb.unfed ? `<div class="bad">${wb.unfed} unit(s) unfed: build farms</div>` : ""}</div>`;
-}
-
-function buildPanel(s: RunState): string {
-  const shop = s.shop
-    .map((id, slot) => {
-      const b = BUILDINGS[id];
-      const afford = s.wood >= b.cost && !s.pending;
-      return `<button class="card shop" data-action="buy" data-slot="${slot}" ${afford ? "" : "disabled"}>
-        <div class="big">${b.icon}</div><b>${b.name}</b><span class="cost">🪵 ${b.cost}</span><span>${b.desc}</span></button>`;
-    })
-    .join("");
-  const pending = s.pending
-    ? `<div class="pending">Placing <b>${BUILDINGS[s.pending].icon} ${BUILDINGS[s.pending].name}</b>: click a green tile.
-        <button data-action="cancel">Cancel</button></div>`
-    : "";
-  return `
-    <h2>Build phase</h2>
-    ${pending}
-    <div class="cards">${shop || "<span class='muted'>Shop empty.</span>"}</div>
-    <button data-action="reroll" ${s.wood >= RULES.rerollCost && !s.pending ? "" : "disabled"}>🎲 Reroll (🪵${RULES.rerollCost})</button>
-    ${warbandSummary(s)}
-    <button class="primary" data-action="end-build">Done building ➜</button>
-    ${history(s)}`;
-}
-
-function fatePanel(s: RunState): string {
-  const cards = s.fateOffers
+function renderChoose(s: RunState): void {
+  const cards = s.offers
     .map((id) => {
-      const c = fateCard(id);
-      const afford = s.lore >= c.cost;
-      return `<button class="card fate ${c.patron.toLowerCase()}" data-action="fate" data-id="${id}" ${afford ? "" : "disabled"}>
-        <small>${c.patron}</small><b>${c.name}</b><span class="cost">📜 ${c.cost}</span><span>${c.desc}</span></button>`;
+      const k = SKILLS[id];
+      const lv = s.levels[id] ?? 0;
+      return `<button class="card skill ${k.cls === "any" ? "shared" : ""}" data-action="pick" data-id="${id}">
+        <div class="big">${k.icon}</div>
+        <b>${k.name}</b>
+        <small class="tag ${k.kind}">${KIND_LABEL[k.kind]}${k.cls === "any" ? " · Shared" : ""}</small>
+        <span class="lv">${lv ? `Lv ${lv} → ${lv + 1}` : "New"}${lv + 1 === MAX_LEVEL ? " (max)" : ""}</span>
+        <span>${k.desc(lv + 1)}</span>
+      </button>`;
     })
     .join("");
-  const taken = s.fateTaken.map((id) => fateCard(id).name).join(", ");
-  return `
-    <h2>Fate cards</h2>
-    <p class="muted">Spend lore on a permanent blessing, or save it.</p>
-    <div class="cards">${cards}</div>
-    <button class="primary" data-action="fate-skip">Skip ➜ to battle</button>
-    ${taken ? `<p class="muted">Blessings: ${esc(taken)}</p>` : ""}`;
+  app.innerHTML = `${header(s)}
+    <main class="layout">
+      <div class="col">${heroPanel(s)}</div>
+      <div class="col">
+        ${mobPanel(s)}
+        <section class="panel">
+          <h2>Choose a skill</h2>
+          <div class="cards three">${cards}</div>
+          <button data-action="reroll" ${s.rerollsLeft ? "" : "disabled"}>🎲 Reroll (${s.rerollsLeft} left)</button>
+        </section>
+      </div>
+    </main>`;
 }
 
-function battlePanel(s: RunState): string {
-  const o = s.opponent!;
-  return `
-    <h2>Battle</h2>
-    <p>Next rival: <b>${o.ghost ? "👻 " : ""}${esc(o.name)}</b> ${o.clan ? `(${CLANS[o.clan].name})` : ""} · ${o.units.length} units</p>
-    ${warbandSummary(s)}
-    <button class="primary" data-action="fight">⚔️ Fight!</button>`;
-}
-
-function endPanel(s: RunState): string {
-  const won = s.phase === "won";
-  return `
-    <h2>${won ? "🏆 Valhalla awaits!" : "💀 Your clan has fallen"}</h2>
-    <p>${won ? `You survived all ${RULES.finalRound} rounds with ${s.hp} HP.` : `Defeated in round ${s.round}.`}</p>
-    <button class="primary" data-action="restart">New run</button>
-    ${history(s)}`;
-}
-
-function history(s: RunState): string {
-  if (s.history.length === 0) return "";
-  const rows = [...s.history]
-    .reverse()
-    .map((h) => `<li class="${h.outcome}">R${h.round} ${h.outcome.toUpperCase()} vs ${esc(h.opponent)}${h.damageTaken ? ` (−${h.damageTaken}❤️)` : ""}</li>`)
-    .join("");
-  return `<ul class="history">${rows}</ul>`;
-}
-
-function renderBattleOverlay(): void {
+function renderBattle(s: RunState): void {
   if (app.querySelector("canvas.arena")) return;
-  const s = run!;
-  const o = s.opponent!;
-  app.innerHTML = `
-    ${header(s)}
+  const { def } = currentMob(s);
+  battle = startBattle(s);
+  app.innerHTML = `${header(s)}
     <div class="battle-screen">
-      <div class="vs"><span class="you">${CLANS[s.clan].icon} You</span> vs <span class="foe">${o.ghost ? "👻 " : ""}${esc(o.name)} ${o.clan ? CLANS[o.clan].icon : "💀"}</span></div>
-      <canvas class="arena"></canvas>
-      <div class="battle-controls">
-        <button data-action="speed">⏩ Speed ×<span id="spd">${battleSpeed}</span></button>
-        <button data-action="skip-battle">Skip to result</button>
+      <div class="vs"><span class="you">${CLASSES[s.cls].icon} You</span> vs <span class="foe">${def.name} ${def.icon}</span></div>
+      <canvas class="arena" width="880" height="320"></canvas>
+      <div class="battle-bar">
+        <div class="cds" id="cds"></div>
+        <div class="controls">
+          <button data-action="speed">⏩ ×<span id="spd">${battleSpeed}</span></button>
+          <button data-action="skip">Skip ⏭</button>
+        </div>
       </div>
       <div id="result"></div>
     </div>`;
   const canvas = app.querySelector<HTMLCanvasElement>("canvas.arena")!;
-  stopBattle = playBattle(canvas, battle!, () => battleSpeed, showResult);
+  stopBattle = playBattle(
+    canvas,
+    document.getElementById("cds")!,
+    battle,
+    { heroIcon: CLASSES[s.cls].icon, mobIcon: def.icon, mobBoss: def.boss },
+    () => battleSpeed,
+    showResult,
+  );
 }
 
 function showResult(): void {
-  const s = run!;
   const b = battle!;
-  const outcome = b.outcome!;
-  const dmg = lossDamage(s.round, b.survivingThreat("enemy"));
-  const text = outcome === "win" ? "Victory!" : outcome === "loss" ? `Defeat. You lose ${dmg} ❤️.` : "Draw. No damage.";
+  const won = b.outcome === "win";
   const el = document.getElementById("result");
-  if (el) el.innerHTML = `<h2 class="${outcome}">${text}</h2><button class="primary" data-action="after-battle">Continue ➜</button>`;
-}
-
-function startFight(): void {
-  const s = run!;
-  saveGhost({ seed: s.seed, round: s.round, clan: s.clan, units: playerWarband(s).units });
-  battle = fight(s);
-  render();
+  if (!el) return;
+  el.innerHTML = won
+    ? `<h2 class="win">Victory! ${Math.round(b.hero.hp)} HP left in ${b.time.toFixed(1)}s</h2>
+       <button class="primary" data-action="next">Choose next skill ➜</button>`
+    : `<h2 class="loss">${b.time >= 60 ? "Out of time." : "Defeated."}</h2>
+       <button class="primary" data-action="next">See results ➜</button>`;
 }
 
 function afterBattle(): void {
   const s = run!;
-  const b = battle!;
   stopBattle?.();
   stopBattle = null;
-  resolveBattle(s, b.outcome!, b.survivingThreat("enemy"));
+  finishBattle(s, battle!.outcome === "win");
   battle = null;
-  hoverTile = null;
+  if (s.phase === "over") saveBest(s.cls, s.round - 1);
   render();
 }
 
-function flash(msg: string): void {
-  toast = msg;
-  render();
-  setTimeout(() => {
-    if (toast === msg) {
-      toast = "";
-      render();
-    }
-  }, 1800);
+function renderOver(s: RunState): void {
+  const { def } = currentMob(s);
+  const wins = s.round - 1;
+  app.innerHTML = `${header(s)}
+    <div class="over panel">
+      <h1>💀 Game over</h1>
+      <p>${CLASSES[s.cls].name} fell to the <b>${def.icon} ${def.name}</b> in round ${s.round} after <b>${wins}</b> win${wins === 1 ? "" : "s"}.</p>
+      ${heroPanel(s)}
+      <div class="row">
+        <button class="primary" data-action="again">Try again as ${CLASSES[s.cls].name}</button>
+        <button data-action="title">Change class</button>
+      </div>
+    </div>`;
 }
 
 app.addEventListener("click", (e) => {
-  const target = e.target as HTMLElement;
-  const tileEl = target.closest<HTMLElement>("[data-tile]");
-  if (tileEl && run?.pending) {
-    const err = placePending(run, Number(tileEl.dataset.tile));
-    if (err) flash(`Can't build there: ${err}`);
-    else render();
-    return;
-  }
-  const btn = target.closest<HTMLButtonElement>("[data-action]");
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-action]");
   if (!btn || btn.disabled) return;
-  const s = run;
+  const seed = () => Math.floor(Math.random() * 2 ** 31);
   switch (btn.dataset.action) {
-    case "clan":
-      run = newRun(Math.floor(Math.random() * 2 ** 31), btn.dataset.id as ClanId);
+    case "class":
+      run = newRun(seed(), btn.dataset.id as ClassId);
       break;
-    case "buy":
-      buy(s!, Number(btn.dataset.slot));
-      break;
-    case "cancel":
-      cancelPending(s!);
+    case "pick":
+      chooseSkill(run!, btn.dataset.id as SkillId);
       break;
     case "reroll":
-      reroll(s!);
+      reroll(run!);
       break;
-    case "end-build":
-      endBuild(s!);
-      break;
-    case "fate":
-      takeFate(s!, btn.dataset.id!);
-      break;
-    case "fate-skip":
-      takeFate(s!, null);
-      break;
-    case "fight":
-      return startFight();
     case "speed": {
       battleSpeed = battleSpeed >= 4 ? 1 : battleSpeed * 2;
       const spd = document.getElementById("spd");
       if (spd) spd.textContent = String(battleSpeed);
       return;
     }
-    case "skip-battle":
+    case "skip":
       battle?.runToEnd();
       return;
-    case "after-battle":
+    case "next":
       return afterBattle();
-    case "restart":
+    case "again":
+      run = newRun(seed(), run!.cls);
+      break;
+    case "title":
       run = null;
       break;
   }
-  // A ghost from an earlier run replaces the bot rival about half the time.
-  if (s && s.phase === "battle" && s.opponent?.clan && !s.opponent.ghost && btn.dataset.action?.startsWith("fate")) {
-    const ghost = Math.random() < 0.5 ? findGhost(s.round, s.seed, Math.random()) : null;
-    if (ghost) s.opponent = ghost;
-  }
   render();
-});
-
-app.addEventListener("mouseover", (e) => {
-  const tileEl = (e.target as HTMLElement).closest<HTMLElement>("[data-tile]");
-  const next = tileEl ? Number(tileEl.dataset.tile) : null;
-  if (next !== hoverTile && run && run.phase !== "battle" && run.phase !== "won" && run.phase !== "lost") {
-    hoverTile = next;
-    // Only the board reacts to hover; re-rendering the panel would swap buttons under the cursor.
-    const wrap = app.querySelector(".board-wrap");
-    if (wrap) wrap.innerHTML = board(run) + tileInfo(run);
-  }
-});
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && run?.pending) {
-    cancelPending(run);
-    render();
-  }
 });
 
 render();
