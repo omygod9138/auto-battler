@@ -300,7 +300,7 @@ export class Battle {
     const h = this.hero;
     const before = h.hp;
     h.hp = Math.min(h.s.maxHp, h.hp + amount);
-    if (h.hp - before >= 1) this.emit({ t: this.time, type: "heal", target: "hero", amount: h.hp - before });
+    if (h.hp - before >= 0.05) this.emit({ t: this.time, type: "heal", target: "hero", amount: h.hp - before });
   }
 
   private mobAttack(): void {

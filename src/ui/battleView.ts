@@ -176,8 +176,10 @@ export function playBattle(
         break;
       }
       case "heal":
-        if (e.amount >= 2) {
-          scene.floaters.push({ born: scene.now, side: target, text: `+${Math.round(e.amount)}`, color: "#5fe07a", size: 15, dx });
+        // Lifesteal heals are small, so show every one; tenths keep "+0.8" from reading as "+1".
+        if (e.amount >= 0.05) {
+          const text = e.amount < 9.95 ? e.amount.toFixed(1).replace(/\.0$/, "") : `${Math.round(e.amount)}`;
+          scene.floaters.push({ born: scene.now, side: target, text: `+${text}`, color: "#5fe07a", size: 15, dx });
           for (let i = 0; i < 4; i++) scene.particles.push({ x: x + rand(-18, 18), y: y + rand(-10, 20), vx: 0, vy: rand(-45, -25), life: 0, max: 0.8, size: 12, color: "#7dffa0", gravity: 0, glyph: "+" });
         }
         break;
