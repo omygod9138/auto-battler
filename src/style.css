@@ -58,7 +58,12 @@ button.primary { background: var(--accent); color: #1b1f24; font-weight: 700; pa
 .chip { background: #2d3540; border: 1px solid var(--line); border-radius: 14px; padding: 3px 9px; font-size: 0.85rem; }
 
 .mob-row { display: flex; gap: 14px; align-items: center; }
-.mob-icon { font-size: 52px; line-height: 1; }
+.portrait { width: 96px; height: 96px; image-rendering: auto; filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.45)); }
+.portrait.small { width: 56px; height: 56px; }
+.mob-portrait { width: 84px; height: 84px; }
+.hero-head { display: flex; align-items: center; gap: 8px; }
+.card.clan .portrait { transition: transform 0.2s; }
+.card.clan:hover .portrait { transform: translateY(-4px) scale(1.06); }
 .panel.mob.boss { border-color: var(--bad); }
 
 .cards { display: grid; gap: 10px; margin: 10px 0; }
