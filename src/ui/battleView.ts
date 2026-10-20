@@ -69,7 +69,6 @@ interface FighterAnim {
   /** Real time of the last hit landed / taken / attack, for squash and lunge. */
   lunge: number;
   hurt: number;
-  lastX: number;
   walk: number;
   moving: number;
   deathAt: number | null;
@@ -84,8 +83,8 @@ class Scene {
   shake = 0;
   now = 0;
   anim: Record<Side, FighterAnim> = {
-    hero: { lunge: -9, hurt: -9, lastX: 0, walk: 0, moving: 0, deathAt: null },
-    mob: { lunge: -9, hurt: -9, lastX: 0, walk: 0, moving: 0, deathAt: null },
+    hero: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null },
+    mob: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null },
   };
   clouds = Array.from({ length: 6 }, (_, i) => ({ x: i * 170 + rand(0, 80), y: rand(20, 90), s: rand(0.6, 1.3), v: rand(4, 10) }));
   ambient: Particle[] = Array.from({ length: 40 }, () => this.flake(rand(0, H)));
@@ -124,8 +123,6 @@ export function playBattle(
 
   const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   const scene = new Scene();
-  scene.anim.hero.lastX = battle.hero.x;
-  scene.anim.mob.lastX = battle.mob.x;
   const heights: Record<Side, number> = { hero: height(look.hero), mob: height(look.mob) };
   const layers = new LayerCache();
   let seen = 0;
@@ -310,11 +307,10 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
   }
   for (const side of ["hero", "mob"] as const) {
     const a = scene.anim[side];
-    const x = side === "hero" ? battle.hero.x : battle.mob.x;
-    const moving = Math.abs(x - a.lastX) > 1e-4;
+    // Ask the sim rather than watching x: it steps at 20 Hz, so most frames see no change.
+    const moving = isAdvancing(battle, side);
     a.moving += ((moving ? 1 : 0) - a.moving) * Math.min(1, dt * 10);
     if (moving || a.moving > 0.05) a.walk += dt * 9;
-    a.lastX = x;
   }
 }
 
@@ -398,6 +394,13 @@ function draw(
   ctx.font = "13px system-ui, sans-serif";
   ctx.textAlign = "left";
   ctx.fillText(`${battle.time.toFixed(1)}s`, 10, 18);
+}
+
+/** True while a fighter is walking toward its foe, mirroring the movement rules in Battle. */
+function isAdvancing(battle: Battle, side: Side): boolean {
+  const me = side === "hero" ? battle.hero : battle.mob;
+  const foe = side === "hero" ? battle.mob : battle.hero;
+  return !battle.outcome && me.stun <= 0 && me.root <= 0 && Math.abs(foe.x - me.x) > me.s.range + 1e-6;
 }
 
 /** How far into the swing before the next hit, so attack art can wind up ahead of the damage. */
