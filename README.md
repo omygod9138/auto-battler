@@ -22,6 +22,10 @@ flowchart LR
   B -->|lose| O[Game over]
 ```
 
+![Battle](docs/battle-mage.gif)
+
+![Characters](docs/characters.png)
+
 | Choose | Battle | Game over |
 | --- | --- | --- |
 | ![](docs/choose.png) | ![](docs/battle.png) | ![](docs/over.png) |
@@ -36,6 +40,7 @@ flowchart LR
 ## Code map
 
 - `src/core/` (pure, seeded, no DOM): `stats.ts` classes · `skills.ts` skill table and numbers · `mobs.ts` roster and scaling · `battle.ts` tick sim · `run.ts` choose → battle → next state machine.
-- `src/ui/battleView.ts` side-view canvas renderer (projectiles, floating numbers, cooldown HUD).
+- `src/ui/characters.ts` procedural rigged characters (3 heroes, 9 mobs): walk cycles, attack swings, idle breathing.
+- `src/ui/battleView.ts` side-view canvas renderer: parallax sky, particles, hit flash, screen shake, projectiles, death and victory effects, cooldown HUD.
 - `src/main.ts` screens and input.
 - `tests/balance.test.ts` keeps random-pick runs at 5–20 wins per class.

@@ -12,6 +12,8 @@ import {
   type RunState,
 } from "./core/run";
 import { playBattle } from "./ui/battleView";
+import { portrait } from "./ui/characters";
+import { loadSprites } from "./ui/sprites";
 
 const app = document.getElementById("app")!;
 
@@ -59,7 +61,7 @@ function renderTitle(): void {
           .map((id) => {
             const c = CLASSES[id];
             return `<button class="card clan" data-action="class" data-id="${id}">
-              <div class="big">${c.icon}</div>
+              <img class="portrait" src="${portrait(id)}" alt="" width="96" height="96">
               <b>${c.name}</b><small class="tag">${c.role}</small>
               <span>${c.desc}</span>
               <span class="muted">${statLine(c.base)}</span>
@@ -103,7 +105,7 @@ function heroPanel(s: RunState): string {
     .map(([id, lv]) => `<span class="chip" title="${SKILLS[id].desc(lv)}">${SKILLS[id].icon} ${SKILLS[id].name} <b>${lv}</b></span>`)
     .join("");
   return `<section class="panel hero">
-    <h3>${CLASSES[s.cls].icon} Your hero</h3>
+    <div class="hero-head"><img class="portrait small" src="${portrait(s.cls)}" alt="" width="56" height="56"><h3>Your ${CLASSES[s.cls].name}</h3></div>
     <dl class="stats">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
     <h3>Skills</h3>
     <div class="chips">${owned || "<span class='muted'>None yet.</span>"}</div>
@@ -114,7 +116,7 @@ function mobPanel(s: RunState): string {
   const { def, stats } = currentMob(s);
   return `<section class="panel mob ${def.boss ? "boss" : ""}">
     <h3>Next: round ${s.round}${def.boss ? " · BOSS" : ""}</h3>
-    <div class="mob-row"><span class="mob-icon">${def.icon}</span>
+    <div class="mob-row"><img class="portrait mob-portrait" src="${portrait(def.id)}" alt="" width="84" height="84">
       <div><b>${def.name}</b><br><span class="muted">${def.trait}</span><br>
       ❤️ ${stats.maxHp} · ⚔️ ${stats.dmg.toFixed(0)} · 📏 ${stats.range}${stats.armor ? ` · 🛡️ ${stats.armor}` : ""}</div>
     </div>
@@ -171,7 +173,7 @@ function renderBattle(s: RunState): void {
     canvas,
     document.getElementById("cds")!,
     battle,
-    { heroIcon: CLASSES[s.cls].icon, mobIcon: def.icon, mobBoss: def.boss },
+    { hero: s.cls, mob: def.id, mobBoss: def.boss },
     () => battleSpeed,
     showResult,
   );
@@ -249,4 +251,5 @@ app.addEventListener("click", (e) => {
   render();
 });
 
-render();
+// Missing art just means the procedural characters are used.
+loadSprites().finally(render);

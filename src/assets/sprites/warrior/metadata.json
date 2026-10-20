@@ -1,0 +1,102 @@
+{
+  "group_id": "983ca247-e171-42dc-bf24-494ba50cbc25",
+  "states": [
+    {
+      "character": {
+        "id": "fc45159a-ccfe-451b-8679-5fbe0a0764c7",
+        "name": "Idle",
+        "prompt": "**Settings**\n- Canvas: 64x64\n- View: side-scroller\n- Direction: east (facing right)\n- Outline: single color black\n- Shading: basic\n- Detail: medium\n- Background: transparent\n\n**Character description**\nchibi norse knight, 3 heads tall, sturdy stance, steel nasal helmet with cheek guards, short braided red beard, chainmail hauberk under a crimson tabard with a white raven emblem, brown leather belt and boots, short dark red cape, round wooden shield with iron rim held on the left arm, straight steel longsword in the right hand, determined eyes, side view facing right, full body, centered, feet on the bottom of the canvas\n\n**Animation prompts** (same settings, east)\n1. idle: breathing, slight shield bob, sword resting forward\n2. walk: steady march forward, cape swaying\n3. attack: raise sword overhead then chop down hard\n4. shield bash: lunge forward leading with the shield\n5. hurt: recoil backward, head snaps back\n6. death: drop sword and fall backward to the ground\n\n**Keep consistent across all frames**\nsame palette (steel grey, crimson, brown leather, warm skin), same proportions, same equipment, no extra props, no background, no text\n\n**Game note**\nExport each animation as a horizontal sprite sheet (PNG, 64px frames). The canvas renderer can play them directly, no engine needed.",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-10-20T17:06:57.035037+00:00"
+      },
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "south": "Idle/rotations/south.png",
+          "south-east": "Idle/rotations/south-east.png",
+          "east": "Idle/rotations/east.png",
+          "north-east": "Idle/rotations/north-east.png",
+          "north": "Idle/rotations/north.png",
+          "north-west": "Idle/rotations/north-west.png",
+          "west": "Idle/rotations/west.png",
+          "south-west": "Idle/rotations/south-west.png"
+        },
+        "animations": {
+          "Walk": {
+            "east": [
+              "Idle/animations/Walk/east/frame_000.png",
+              "Idle/animations/Walk/east/frame_001.png",
+              "Idle/animations/Walk/east/frame_002.png",
+              "Idle/animations/Walk/east/frame_003.png",
+              "Idle/animations/Walk/east/frame_004.png",
+              "Idle/animations/Walk/east/frame_005.png"
+            ]
+          },
+          "death_knight_is_struck_and_staggers_back_a_step_kn": {
+            "east": [
+              "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_000.png",
+              "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_001.png",
+              "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_002.png",
+              "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_003.png",
+              "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_004.png",
+              "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_005.png",
+              "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_006.png",
+              "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_007.png",
+              "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_008.png"
+            ]
+          },
+          "overhead_sword_slash_knight_raises_the_longsword_i": {
+            "east": [
+              "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_000.png",
+              "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_001.png",
+              "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_002.png",
+              "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_003.png",
+              "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_004.png",
+              "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_005.png",
+              "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_006.png",
+              "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_007.png",
+              "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_008.png"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "character": {
+        "id": "1f622d8f-9195-43f0-bec7-b3022a1fb777",
+        "name": "dead",
+        "prompt": "**Settings**\n- Canvas: 64x64\n- View: side-scroller\n- Direction: east (facing right)\n- Outline: single color black\n- Shading: basic\n- Detail: medium\n- Background: transparent\n\n**Character description**\nchibi norse knight, 3 heads tall, sturdy stance, steel nasal helmet with cheek guards, short braided red beard, chainmail hauberk under a crimson tabard with a white raven emblem, brown leather belt and boots, short dark red cape, round wooden shield with iron rim held on the left arm, straight steel longsword in the right hand, determined eyes, side view facing right, full body, centered, feet on the bottom of the canvas\n\n**Animation prompts** (same settings, east)\n1. idle: breathing, slight shield bob, sword resting forward\n2. walk: steady march forward, cape swaying\n3. attack: raise sword overhead then chop down hard\n4. shield bash: lunge forward leading with the shield\n5. hurt: recoil backward, head snaps back\n6. death: drop sword and fall backward to the ground\n\n**Keep consistent across all frames**\nsame palette (steel grey, crimson, brown leather, warm skin), same proportions, same equipment, no extra props, no background, no text\n\n**Game note**\nExport each animation as a horizontal sprite sheet (PNG, 64px frames). The canvas renderer can play them directly, no engine needed.",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "low top-down",
+        "created_at": "2026-10-20T17:49:41.772002+00:00"
+      },
+      "folder": "dead",
+      "frames": {
+        "rotations": {
+          "south": "dead/rotations/south.png",
+          "south-east": "dead/rotations/south-east.png",
+          "east": "dead/rotations/east.png",
+          "north-east": "dead/rotations/north-east.png",
+          "north": "dead/rotations/north.png",
+          "north-west": "dead/rotations/north-west.png",
+          "west": "dead/rotations/west.png",
+          "south-west": "dead/rotations/south-west.png"
+        },
+        "animations": {}
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-10-20T18:05:49.101301"
+}
