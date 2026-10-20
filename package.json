@@ -1,0 +1,27 @@
+{
+  "name": "auto-battler",
+  "version": "1.0.0",
+  "description": "Browser city-building auto-battler inspired by Northgard: Battlegrounds",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omygod9138/auto-battler.git"
+  },
+  "bugs": {
+    "url": "https://github.com/omygod9138/auto-battler/issues"
+  },
+  "homepage": "https://github.com/omygod9138/auto-battler#readme",
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^6.4.4",
+    "vitest": "^3.2.7"
+  },
+  "private": true,
+  "type": "module"
+}
