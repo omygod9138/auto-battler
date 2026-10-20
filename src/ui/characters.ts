@@ -1,4 +1,4 @@
-import { sprite, type SpriteSet } from "./sprites";
+import { sprite, type Clip, type SpriteSet } from "./sprites";
 
 // Procedural, rigged characters drawn with canvas paths. Every character is drawn
 // facing right with its feet at (0, 0); the caller flips and positions it.
@@ -10,8 +10,10 @@ export interface Pose {
   walk: number;
   /** 0 = standing, 1 = full stride. */
   moving: number;
-  /** Attack progress 0..1, or -1 when not attacking. */
+  /** Attack progress 0..1 after the hit lands, or -1 when not attacking. */
   attack: number;
+  /** Wind-up progress 0..1 before the next hit lands, if one is coming. */
+  windup?: number;
   /** Hit-reaction progress 0..1, or -1. */
   hurt: number;
   /** Death progress 0..1, when dying. */
@@ -123,25 +125,35 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, id: string, pose: P
   ctx.restore();
 }
 
+/** Fraction of an attack clip played before the hit lands; the rest follows through. */
+const STRIKE = 0.55;
+
 function drawSprite(ctx: CanvasRenderingContext2D, art: SpriteSet, pose: Pose): void {
   const { anims } = art;
-  const pick = (frames: HTMLImageElement[] | undefined, k: number) => frames?.[Math.min(frames.length - 1, Math.floor(k * frames.length))];
-  const loop = (frames: HTMLImageElement[] | undefined, k: number) => frames?.[Math.floor(k * frames.length) % frames.length];
-  let img: HTMLImageElement | undefined;
+  const at = (clip: Clip | undefined, i: number): [Clip, HTMLImageElement] | undefined =>
+    clip && [clip, clip.frames[Math.max(0, Math.min(clip.frames.length - 1, i))]];
+  const loop = (clip: Clip | undefined, cycles: number) => clip && at(clip, Math.floor(cycles * clip.frames.length) % clip.frames.length);
+  let pick: [Clip, HTMLImageElement] | undefined;
   let hop = 0;
-  if (pose.death !== undefined) img = pick(anims.death, pose.death);
-  if (!img && pose.attack >= 0) img = pick(anims.attack, pose.attack);
-  if (!img && pose.hurt >= 0) img = pick(anims.hurt, pose.hurt);
-  if (!img && pose.moving > 0.5) {
-    img = loop(anims.walk, pose.walk / (Math.PI * 2));
-    // Without walk frames, hop the still a pixel or two in step.
-    if (!img) hop = Math.round(Math.abs(Math.sin(pose.walk)) * 2 * pose.moving);
+  if (pose.death !== undefined) pick = at(anims.death, Math.floor(pose.death * (anims.death?.frames.length ?? 0)));
+  if (!pick && anims.attack) {
+    const n = anims.attack.frames.length;
+    const strike = Math.round(n * STRIKE);
+    if (pose.attack >= 0) pick = at(anims.attack, strike + Math.floor(pose.attack * (n - strike)));
+    else if (pose.windup !== undefined && pose.windup > 0) pick = at(anims.attack, Math.floor(pose.windup * strike));
   }
-  img ??= loop(anims.idle, (pose.t * 8) / Math.max(1, anims.idle?.length ?? 1)) ?? art.still;
+  if (!pick && pose.hurt >= 0) pick = at(anims.hurt, Math.floor(pose.hurt * (anims.hurt?.frames.length ?? 0)));
+  if (!pick && pose.moving > 0.5) {
+    pick = loop(anims.walk, pose.walk / (Math.PI * 2));
+    // Without walk frames, hop the still a pixel or two in step.
+    if (!pick) hop = Math.round(Math.abs(Math.sin(pose.walk)) * 2 * pose.moving);
+  }
+  pick ??= loop(anims.idle, (pose.t * 8) / (anims.idle?.frames.length ?? 1)) ?? at(art.still, 0)!;
+  const [clip, img] = pick;
   ctx.save();
   ctx.scale(SPRITE_SCALE, SPRITE_SCALE);
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, -Math.round(art.w / 2), -art.foot - hop);
+  ctx.drawImage(img, -Math.round(img.width / 2), -clip.foot - hop);
   ctx.restore();
 }
 

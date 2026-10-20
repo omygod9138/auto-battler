@@ -4,16 +4,18 @@
 
 export type SpriteAnim = "idle" | "walk" | "attack" | "hurt" | "death";
 
+/** Frames drawn centred horizontally with row `foot` on the ground. PixelLab pads each animation's canvas differently, so every clip carries its own anchor. */
+export interface Clip {
+  frames: HTMLImageElement[];
+  /** Row just below the first frame's lowest opaque pixel, where the feet touch the ground. */
+  foot: number;
+}
+
 export interface SpriteSet {
   /** Still, right-facing pose; used whenever an animation is missing. */
-  still: HTMLImageElement;
-  anims: Partial<Record<SpriteAnim, HTMLImageElement[]>>;
-  /** Frame size in art pixels. */
-  w: number;
-  h: number;
-  /** Row just below the lowest opaque pixel of the still, i.e. where the feet touch the ground. */
-  foot: number;
-  /** Height of the opaque art above the feet. */
+  still: Clip;
+  anims: Partial<Record<SpriteAnim, Clip>>;
+  /** Height of the still's opaque art above the feet. */
   visible: number;
 }
 
@@ -27,7 +29,12 @@ interface PixelLabExport {
 }
 
 const metas = import.meta.glob<PixelLabExport>("../assets/sprites/*/metadata.json", { eager: true, import: "default" });
-const pngs = import.meta.glob<string>("../assets/sprites/**/*.png", { eager: true, query: "?url", import: "default" });
+// Only the right-facing art is used; the other directions stay out of the bundle.
+const pngs = import.meta.glob<string>(["../assets/sprites/*/*/rotations/east.png", "../assets/sprites/*/*/animations/*/east/*.png"], {
+  eager: true,
+  query: "?url",
+  import: "default",
+});
 
 /** Animation names are free text in PixelLab, so match them by keyword. */
 const ROLES: [SpriteAnim, RegExp][] = [
@@ -84,21 +91,29 @@ function opaqueRows(img: HTMLImageElement): { top: number; bottom: number } {
   return bottom < 0 ? { top: 0, bottom: c.height - 1 } : { top, bottom };
 }
 
+async function loadClip(urls: string[]): Promise<Clip> {
+  const frames = await Promise.all(urls.map(loadImage));
+  return { frames, foot: opaqueRows(frames[0]).bottom + 1 };
+}
+
 async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | null> {
   const url = (path: string) => pngs[`${dir}/${path}`];
-  const frames = meta.states?.[0]?.frames;
+  const states = meta.states ?? [];
   const anims: SpriteSet["anims"] = {};
-  for (const [name, entry] of Object.entries(frames?.animations ?? {})) {
-    const role = ROLES.find(([, re]) => re.test(name))?.[0];
-    if (!role || anims[role]) continue;
-    const urls = eastFrames(entry).map(url).filter((u): u is string => !!u);
-    if (urls.length) anims[role] = await Promise.all(urls.map(loadImage));
+  // An export can hold several characters; gather animations from all of them.
+  for (const state of states) {
+    for (const [name, entry] of Object.entries(state.frames?.animations ?? {})) {
+      const role = ROLES.find(([, re]) => re.test(name))?.[0];
+      if (!role || anims[role]) continue;
+      const urls = eastFrames(entry).map(url).filter((u): u is string => !!u);
+      if (urls.length) anims[role] = await loadClip(urls);
+    }
   }
-  const stillUrl = url(frames?.rotations?.east ?? "") ?? undefined;
-  const still = stillUrl ? await loadImage(stillUrl) : anims.idle?.[0];
+  const stillUrl = states.map((st) => url(st.frames?.rotations?.east ?? "")).find((u) => !!u);
+  const still = stillUrl ? await loadClip([stillUrl]) : anims.idle;
   if (!still) return null;
-  const { top, bottom } = opaqueRows(still);
-  return { still, anims, w: still.width, h: still.height, foot: bottom + 1, visible: bottom + 1 - top };
+  const { top, bottom } = opaqueRows(still.frames[0]);
+  return { still, anims, visible: bottom + 1 - top };
 }
 
 let loading: Promise<void> | null = null;

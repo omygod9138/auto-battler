@@ -362,6 +362,7 @@ function draw(
       walk: a.walk,
       moving: a.moving,
       attack,
+      windup: windup(battle, side),
       hurt,
       death: death ?? undefined,
     });
@@ -397,6 +398,15 @@ function draw(
   ctx.font = "13px system-ui, sans-serif";
   ctx.textAlign = "left";
   ctx.fillText(`${battle.time.toFixed(1)}s`, 10, 18);
+}
+
+/** How far into the swing before the next hit, so attack art can wind up ahead of the damage. */
+function windup(battle: Battle, side: Side): number | undefined {
+  const me = side === "hero" ? battle.hero : battle.mob;
+  const foe = side === "hero" ? battle.mob : battle.hero;
+  if (battle.outcome || me.stun > 0 || Math.abs(foe.x - me.x) > me.s.range + 1e-6) return undefined;
+  const lead = Math.min(0.3, me.s.interval * 0.5);
+  return me.atkTimer < lead ? 1 - me.atkTimer / lead : undefined;
 }
 
 function drawBackground(ctx: CanvasRenderingContext2D, scene: Scene, t: number, boss: boolean): void {
