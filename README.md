@@ -9,6 +9,8 @@ npm test         # rules, combat, balance
 npm run build
 ```
 
+Live: https://omygod9138.github.io/auto-battler/ (deployed by `.github/workflows/pages.yml` on every push to `main`).
+
 ![Build phase](docs/build.png)
 
 ## Round loop
