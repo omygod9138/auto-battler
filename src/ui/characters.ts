@@ -1,3 +1,5 @@
+import { sprite, type SpriteSet } from "./sprites";
+
 // Procedural, rigged characters drawn with canvas paths. Every character is drawn
 // facing right with its feet at (0, 0); the caller flips and positions it.
 
@@ -12,6 +14,8 @@ export interface Pose {
   attack: number;
   /** Hit-reaction progress 0..1, or -1. */
   hurt: number;
+  /** Death progress 0..1, when dying. */
+  death?: number;
 }
 
 export const IDLE: Pose = { t: 0, walk: 0, moving: 0, attack: -1, hurt: -1 };
@@ -64,8 +68,23 @@ const SPECS: Record<string, Spec> = {
   jotunn: { kind: "humanoid", scale: 1.85, skin: "#9fcbe8", shirt: "#cfe8f7", pants: "#5d7d95", boots: "#40596b", weapon: "iceclub", head: "none", hair: "#eef6fb", beard: "#eef6fb", bulk: 1.6, lean: 0.12, eyes: "#e6fbff" },
 };
 
+/** Rig units per art pixel for sprite characters; with the battle's 1.35 zoom that is 2 screen pixels per art pixel. */
+export const SPRITE_SCALE = 2 / 1.35;
+
+/** How much a character is enlarged when drawn; the battle draws sprites at 1:1 and applies this itself to keep pixels crisp. */
+export function pixelScale(id: string): number {
+  return sprite(id) ? SPRITE_SCALE : 1;
+}
+
+/** True when the character has its own death animation instead of toppling over. */
+export function hasDeathAnim(id: string): boolean {
+  return !!sprite(id)?.anims.death;
+}
+
 /** Approximate on-screen height, for placing health bars and numbers. */
 export function characterHeight(id: string): number {
+  const art = sprite(id);
+  if (art) return art.visible * SPRITE_SCALE;
   const s = SPECS[id] ?? SPECS.slime;
   const base = s.kind === "humanoid" ? 68 : s.kind === "slime" ? 34 : s.kind === "wolf" ? 42 : s.kind === "wraith" ? 74 : 96;
   return base * s.scale;
@@ -77,6 +96,8 @@ export function muzzleHeight(id: string): number {
 }
 
 export function drawCharacter(ctx: CanvasRenderingContext2D, id: string, pose: Pose): void {
+  const art = sprite(id);
+  if (art) return drawSprite(ctx, art, pose);
   const s = SPECS[id] ?? SPECS.slime;
   ctx.save();
   ctx.scale(s.scale, s.scale);
@@ -99,6 +120,28 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, id: string, pose: P
       drake(ctx, s.color, s.belly, pose);
       break;
   }
+  ctx.restore();
+}
+
+function drawSprite(ctx: CanvasRenderingContext2D, art: SpriteSet, pose: Pose): void {
+  const { anims } = art;
+  const pick = (frames: HTMLImageElement[] | undefined, k: number) => frames?.[Math.min(frames.length - 1, Math.floor(k * frames.length))];
+  const loop = (frames: HTMLImageElement[] | undefined, k: number) => frames?.[Math.floor(k * frames.length) % frames.length];
+  let img: HTMLImageElement | undefined;
+  let hop = 0;
+  if (pose.death !== undefined) img = pick(anims.death, pose.death);
+  if (!img && pose.attack >= 0) img = pick(anims.attack, pose.attack);
+  if (!img && pose.hurt >= 0) img = pick(anims.hurt, pose.hurt);
+  if (!img && pose.moving > 0.5) {
+    img = loop(anims.walk, pose.walk / (Math.PI * 2));
+    // Without walk frames, hop the still a pixel or two in step.
+    if (!img) hop = Math.round(Math.abs(Math.sin(pose.walk)) * 2 * pose.moving);
+  }
+  img ??= loop(anims.idle, (pose.t * 8) / Math.max(1, anims.idle?.length ?? 1)) ?? art.still;
+  ctx.save();
+  ctx.scale(SPRITE_SCALE, SPRITE_SCALE);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, -Math.round(art.w / 2), -art.foot - hop);
   ctx.restore();
 }
 

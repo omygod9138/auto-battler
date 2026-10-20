@@ -1,6 +1,6 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { SKILLS } from "../core/skills";
-import { characterHeight, drawCharacter, muzzleHeight } from "./characters";
+import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale } from "./characters";
 
 const W = 880;
 const H = 320;
@@ -356,17 +356,21 @@ function draw(
     const frozen = side === "mob" && f.stun > 0 && battle.events.some((e) => e.type === "damage" && e.fx === "frost" && battle.time - e.t < 3);
     const id = side === "hero" ? look.hero : look.mob;
     const layer = layers.get(side);
+    const death = a.deathAt === null ? null : Math.min(1, (t - a.deathAt) / 0.7);
     layer.draw(id, {
       t: reduced ? 0 : t + (side === "mob" ? 1.7 : 0),
       walk: a.walk,
       moving: a.moving,
       attack,
       hurt,
+      death: death ?? undefined,
     });
     drawFighter(ctx, layer, {
       x, facing, h: heights[side],
       flash: hurt >= 0 && hurt < 0.5 ? 1 - hurt * 2 : 0,
-      death: a.deathAt === null ? null : Math.min(1, (t - a.deathAt) / 0.7),
+      death,
+      animatedDeath: hasDeathAnim(id),
+      zoom: pixelScale(id),
       squash: hurt >= 0 ? 1 - Math.sin(hurt * Math.PI) * 0.08 : 1,
       frozen,
       aura: enraged ? "rgba(255,60,40,0.35)" : side === "hero" && f.shield > 0 ? "rgba(111,182,255,0.28)" : null,
@@ -460,6 +464,10 @@ interface FighterPose {
   h: number;
   flash: number;
   death: number | null;
+  /** The character plays its own death frames, so only fade it. */
+  animatedDeath: boolean;
+  /** Extra enlargement of the layer; sprite art is drawn 1:1 there and scaled once here. */
+  zoom: number;
   squash: number;
   frozen: boolean;
   aura: string | null;
@@ -476,7 +484,7 @@ function drawFighter(ctx: CanvasRenderingContext2D, layer: Layer, p: FighterPose
   ctx.translate(p.x, GROUND);
   if (p.death !== null) {
     // Topple backwards and fade.
-    ctx.rotate(-p.facing * easeOut(p.death) * 1.35);
+    if (!p.animatedDeath) ctx.rotate(-p.facing * easeOut(p.death) * 1.35);
     ctx.globalAlpha = 1 - p.death * 0.65;
   }
   ctx.scale(p.facing * (2 - p.squash) * CHAR_SCALE, p.squash * CHAR_SCALE);
@@ -489,6 +497,10 @@ function drawFighter(ctx: CanvasRenderingContext2D, layer: Layer, p: FighterPose
     ctx.beginPath();
     ctx.arc(0, -h / 2, h * (0.85 + Math.sin(p.t * 6) * 0.05), 0, Math.PI * 2);
     ctx.fill();
+  }
+  if (p.zoom !== 1) {
+    ctx.scale(p.zoom, p.zoom);
+    ctx.imageSmoothingEnabled = false;
   }
   ctx.drawImage(layer.canvas, -Layer.OX, -Layer.OY);
   if (p.flash > 0) {
@@ -714,6 +726,8 @@ class Layer {
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, Layer.W, Layer.H);
     g.translate(Layer.OX, Layer.OY);
+    const zoom = pixelScale(id);
+    g.scale(1 / zoom, 1 / zoom);
     drawCharacter(g, id, pose);
   }
 

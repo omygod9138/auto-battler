@@ -13,6 +13,7 @@ import {
 } from "./core/run";
 import { playBattle } from "./ui/battleView";
 import { portrait } from "./ui/characters";
+import { loadSprites } from "./ui/sprites";
 
 const app = document.getElementById("app")!;
 
@@ -250,4 +251,5 @@ app.addEventListener("click", (e) => {
   render();
 });
 
-render();
+// Missing art just means the procedural characters are used.
+loadSprites().finally(render);
