@@ -240,6 +240,25 @@ describe("battle", () => {
     expect(combos).toBeGreaterThan(5);
   });
 
+  it("heavy strike is a cooldown skill held for the swing right after shield bash", () => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { shieldBash: 1, heavyStrike: 1 }, wall, 1);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    const hits = b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" ? [e.skill ?? "swing"] : []));
+    const heavies = hits.flatMap((s, i) => (s === "heavyStrike" ? [hits[i - 1]] : []));
+    expect(heavies.length).toBeGreaterThan(5);
+    expect(new Set(heavies)).toEqual(new Set(["shieldBash"]));
+  });
+
+  it("static charge fires on its cooldown", () => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 4, speed: 0 });
+    const b = new Battle(CLASSES.mage.base, { static: 1 }, wall, 1);
+    for (let i = 0; i < 40 * 20; i++) b.step();
+    const zaps = b.events.filter((e) => e.type === "damage" && e.label === "Zap!").map((e) => e.t);
+    expect(zaps.length).toBeGreaterThan(5);
+    for (let i = 1; i < zaps.length; i++) expect(zaps[i] - zaps[i - 1]).toBeGreaterThanOrEqual(4 - 1e-6);
+  });
+
   it("no combo from a single skill", () => {
     const b = new Battle(CLASSES.warrior.base, { heavyStrike: 1 }, dummy, 1);
     for (let i = 0; i < 400; i++) b.step();

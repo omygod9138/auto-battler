@@ -41,7 +41,7 @@ export type BattleEvent =
 
 export type Outcome = "win" | "loss";
 
-type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" | "charge" | "spartanKick";
+type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" | "charge" | "spartanKick" | "heavyStrike" | "static";
 
 /** Skills that wind up before they hit, in seconds, so the art can gather momentum first. */
 export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3 };
@@ -64,7 +64,6 @@ export class Battle {
 
   private rng: Rng;
   private lv: (id: SkillId) => number;
-  private hits = 0;
   /** Charge has landed at least once, so held skills may follow it. */
   private charged = false;
   /** The hero is mid Charge dash. */
@@ -96,7 +95,7 @@ export class Battle {
     if (this.lv("manaShield")) this.hero.shield = heroStats.maxHp * N.manaShield(this.lv("manaShield")).shield;
     this.snareX = this.lv("snare") ? ARENA.heroStart + heroStats.range + 1.5 : null;
     // Active skills start at half cooldown so the first cast comes early.
-    for (const id of ["shieldBash", "headshot", "fireball", "frostNova", "meteor", "spartanKick"] as const) {
+    for (const id of ["shieldBash", "headshot", "fireball", "frostNova", "meteor", "spartanKick", "heavyStrike", "static"] as const) {
       if (this.lv(id)) this.cds.set(id, this.cooldown(id) / 2);
     }
     // Charge opens the fight, with Shield Bash ready to follow it.
@@ -137,7 +136,8 @@ export class Battle {
     const lv = this.lv(id);
     const base = id === "shieldBash" ? N.shieldBash(lv).cd : id === "headshot" ? N.headshot(lv).cd
       : id === "fireball" ? N.fireball(lv).cd : id === "frostNova" ? N.frostNova(lv).cd
-      : id === "charge" ? N.charge(lv).cd : id === "spartanKick" ? N.spartanKick(lv).cd : N.meteor(lv).cd;
+      : id === "charge" ? N.charge(lv).cd : id === "spartanKick" ? N.spartanKick(lv).cd
+      : id === "heavyStrike" ? N.heavyStrike(lv).cd : id === "static" ? N.static(lv).cd : N.meteor(lv).cd;
     return base * this.hero.s.cdMult;
   }
 
@@ -320,6 +320,13 @@ export class Battle {
     }
   }
 
+  /** Heavy Strike is held for the swing right after Shield Bash, unless the bash is further off than a whole Heavy cooldown. */
+  private heavyReady(): boolean {
+    if (!this.lv("heavyStrike") || this.cds.get("heavyStrike") !== 0) return false;
+    if (!this.lv("shieldBash") || this.lastSkill === "shieldBash") return true;
+    return this.cds.get("shieldBash")! > this.cooldown("heavyStrike");
+  }
+
   /** The combo a skill would complete if it landed now. */
   private peekCombo(skill: SkillId): Combo | undefined {
     return COMBOS.find(({ pair }) => pair[0] === this.lastSkill && pair[1] === skill);
@@ -340,17 +347,14 @@ export class Battle {
 
   private heroAttack(): void {
     const h = this.hero;
-    this.hits++;
     let mult = 1;
     let label: string | undefined;
     let skill: SkillId | undefined;
-    if (this.lv("heavyStrike")) {
-      const hs = N.heavyStrike(this.lv("heavyStrike"));
-      if (this.hits % hs.every === 0) {
-        mult *= hs.mult;
-        label = "Heavy Strike!";
-        skill = "heavyStrike";
-      }
+    if (this.heavyReady()) {
+      this.cds.set("heavyStrike", this.cooldown("heavyStrike"));
+      mult *= N.heavyStrike(this.lv("heavyStrike")).mult;
+      label = "Heavy Strike!";
+      skill = "heavyStrike";
     }
     const c = skill && this.combo(skill);
     // A plain swing sits between any two skills, so it breaks the chain.
@@ -372,7 +376,8 @@ export class Battle {
     if (this.lv("knockback") && this.rng.next() < N.knockback(this.lv("knockback")).chance) {
       this.mob.x = Math.min(ARENA.length, this.mob.x + N.knockback(1).dist);
     }
-    if (this.lv("static") && this.rng.next() < N.static(this.lv("static")).chance) {
+    if (this.lv("static") && this.cds.get("static") === 0) {
+      this.cds.set("static", this.cooldown("static"));
       this.spell(h.s.dmg * N.static(this.lv("static")).mult, "lightning", "Zap!");
     }
     if (this.lv("ignite") && h.s.magic) this.addBurn(h.s.dmg * 0.3, 2);
