@@ -217,7 +217,7 @@ describe("battle", () => {
   it("shield bash winds up first and announces the combo it will land", () => {
     const b = new Battle(CLASSES.warrior.base, { charge: 1, shieldBash: 1 }, dummy, 1);
     for (let i = 0; i < 300; i++) b.step();
-    const wind = b.events.find((e) => e.type === "windup");
+    const wind = b.events.find((e) => e.type === "windup" && e.skill === "shieldBash");
     const hit = b.events.find((e) => e.type === "damage" && e.skill === "shieldBash");
     expect(wind?.type === "windup" && wind.combo).toBe("Combo! Stun ×2");
     expect(hit!.t - wind!.t).toBeCloseTo(WINDUP.shieldBash!, 5);
@@ -296,6 +296,27 @@ describe("battle", () => {
       if (attacks[i].t - attacks[i - 1].t < SKILL_RECOVERY - 1e-6) bad.push([attacks[i - 1], attacks[i]]);
     }
     expect(bad).toEqual([]);
+  });
+
+  it.each([1, 2, 3])("every combo winds up and is announced one step before it lands (seed %i)", (seed) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 2 }, wall, seed);
+    let combos = 0;
+    for (let i = 0; i < 59 * 20; i++) {
+      const next = b.comboNext();
+      const before = b.events.length;
+      b.step();
+      const landed = b.events.slice(before).filter((e) => e.type === "status" && e.label.startsWith("Combo"));
+      // A combo lands exactly when it was announced, and never unannounced.
+      expect(landed.map((e) => (e.type === "status" ? e.label : ""))).toEqual(next ? [next] : []);
+      combos += landed.length;
+    }
+    expect(combos).toBeGreaterThan(10);
+    // Every skill hit was preceded by its wind-up.
+    for (const e of b.events) {
+      if (e.type !== "damage" || !e.skill) continue;
+      expect(b.events.some((w) => w.type === "windup" && w.skill === e.skill && w.t < e.t)).toBe(true);
+    }
   });
 
   it("no combo from a single skill", () => {
