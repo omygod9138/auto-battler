@@ -107,7 +107,14 @@ async function loadClip(urls: string[]): Promise<Clip> {
   return { frames, foot: opaqueRows(frames[0]).bottom + 1 };
 }
 
+/** Skill clips whose PixelLab frames run the wrong way, played backwards. Keyed by character folder. */
+const REVERSED: Record<string, SkillId[]> = {
+  // Forward, the shield turns from its inner side to its face, which reads as swinging inward.
+  warrior: ["shieldBash"],
+};
+
 async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | null> {
+  const reversed = REVERSED[dir.slice(dir.lastIndexOf("/") + 1)] ?? [];
   const url = (path: string) => pngs[`${dir}/${path}`];
   const states = meta.states ?? [];
   const anims: SpriteSet["anims"] = {};
@@ -120,7 +127,7 @@ async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | n
       // Skill names win over roles: "heavy strike" would otherwise read as a plain attack.
       const skill = skillFor(name);
       if (skill) {
-        skills[skill] ??= await loadClip(urls);
+        skills[skill] ??= await loadClip(reversed.includes(skill) ? [...urls].reverse() : urls);
         continue;
       }
       const role = ROLES.find(([, re]) => re.test(name))?.[0];
