@@ -49,9 +49,11 @@ export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3 };
 /** Seconds after a skill lands before the next attack (and after a swing before the next skill), so two never look simultaneous. */
 export const SKILL_RECOVERY = 0.35;
 
-/** Charge dash and knockback slide speeds, in arena units per second. */
+/** Charge dash speed, in arena units per second. */
 const DASH_SPEED = 16;
-const PUSH_SPEED = 12;
+/** Knockback covers this share of what's left each tick (with a floor), so it launches fast and skids to a stop. */
+const PUSH_SHARE = 0.6;
+const PUSH_MIN_STEP = 0.1;
 
 interface Dot {
   dps: number;
@@ -152,7 +154,7 @@ export class Battle {
       f.root = Math.max(0, f.root - TICK);
       f.vuln = Math.max(0, f.vuln - TICK);
       if (f.push !== 0) {
-        const step = Math.sign(f.push) * Math.min(Math.abs(f.push), PUSH_SPEED * TICK);
+        const step = Math.sign(f.push) * Math.min(Math.abs(f.push), Math.max(PUSH_MIN_STEP, Math.abs(f.push) * PUSH_SHARE));
         const x = Math.max(0, Math.min(ARENA.length, f.x + step));
         f.push = x === f.x + step ? f.push - step : 0;
         f.x = x;
