@@ -74,7 +74,7 @@ export function currentMob(s: RunState): { def: MobDef; stats: Stats } {
 
 export function startBattle(s: RunState): Battle {
   const mob = currentMob(s);
-  return new Battle(currentStats(s), s.levels, mob.stats, hashSeed(s.seed, "battle", s.round), mob.def.enrage);
+  return new Battle(currentStats(s), s.levels, mob.stats, hashSeed(s.seed, "battle", s.round), mob.def.enrage, CLASSES[s.cls].start);
 }
 
 export function finishBattle(s: RunState, won: boolean): void {

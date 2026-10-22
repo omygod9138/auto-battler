@@ -2,7 +2,7 @@
 // round's mob, slow time down, and read a log of skill hits and combos.
 import { Battle, type BattleEvent } from "../core/battle";
 import { mobForRound } from "../core/mobs";
-import { COMBOS, MAX_LEVEL, REACTIONS, comboEffect, reactionEffect, SKILLS, heroStats, type SkillId, type SkillLevels } from "../core/skills";
+import { BAND_EDGE, BAND_HOLD, COMBOS, MAX_LEVEL, OFF_BAND, REACTIONS, comboEffect, reactionEffect, SKILLS, heroStats, type SkillId, type SkillLevels } from "../core/skills";
 import { CLASSES, stats, type ClassId } from "../core/stats";
 import { playBattle } from "./battleView";
 
@@ -22,6 +22,8 @@ const PRESETS: { name: string; cls: ClassId; levels: SkillLevels }[] = [
   { name: "Mage: all four elements", cls: "mage", levels: { fireball: 1, gust: 1, tidalWave: 1, stoneSpike: 1 } },
   { name: "Mage: Fire + Earth (Lava)", cls: "mage", levels: { fireball: 1, stoneSpike: 1 } },
   { name: "Mage: Water + Air (Storm)", cls: "mage", levels: { tidalWave: 1, gust: 1 } },
+  { name: "Ranger: Far → Mid → Close loop", cls: "ranger", levels: { longshot: 1, pinningArrow: 1, scatterShot: 1, snare: 1 } },
+  { name: "Ranger: Longshot + Scatter Shot", cls: "ranger", levels: { longshot: 1, scatterShot: 1 } },
 ];
 
 /** Never hits back and barely dies, so combos can be watched over and over. */
@@ -99,6 +101,8 @@ export function startSandbox(app: HTMLElement): void {
           <div class="panel"><h3>Log</h3><ol id="sb-log" class="sb-log"></ol></div>
           ${setup.cls === "mage"
             ? `<div class="panel"><h3>Element reactions</h3><p class="muted">Each spell marks the mob for 4s; another element reacts with the mark, in either order. Some leave a zone or cloud that the next element reacts with again.</p>${reactions}</div>`
+            : setup.cls === "ranger"
+            ? `<div class="panel"><h3>Range bands</h3><p class="muted">Close ≤${BAND_EDGE.close}m · Mid ≤${BAND_EDGE.mid}m · Far beyond. Each shot waits for its band (Longshot Far, Pinning Arrow Mid, Scatter Shot Close); after ${BAND_HOLD}s in range it fires anyway at ${OFF_BAND * 100}% strength. Scatter Shot throws a Close mob back to Far.</p></div>`
             : `<div class="panel"><h3>Combos</h3><p class="muted">The second skill must be the very next attack; a normal swing in between breaks it. Pairs chain.</p>${combos}</div>`}
         </div>
       </div>`;
@@ -110,7 +114,7 @@ export function startSandbox(app: HTMLElement): void {
     save(setup);
     const levels = Object.fromEntries(Object.entries(setup.levels).filter(([, lv]) => lv)) as SkillLevels;
     const mob = setup.round ? mobForRound(setup.round) : null;
-    const battle = new Battle(heroStats(CLASSES[setup.cls].base, levels), levels, mob?.stats ?? DUMMY, setup.seed, mob?.def.enrage ?? false);
+    const battle = new Battle(heroStats(CLASSES[setup.cls].base, levels), levels, mob?.stats ?? DUMMY, setup.seed, mob?.def.enrage ?? false, CLASSES[setup.cls].start);
     const canvas = app.querySelector<HTMLCanvasElement>("canvas.arena")!;
     const log = app.querySelector<HTMLOListElement>("#sb-log")!;
     const status = app.querySelector<HTMLElement>("#sb-status")!;
@@ -122,7 +126,7 @@ export function startSandbox(app: HTMLElement): void {
         const text = describe(e);
         if (text) log.insertAdjacentHTML("afterbegin", `<li><span class="muted">${e.t.toFixed(1)}s</span> ${text}</li>`);
       }
-      status.textContent = `Mob HP ${Math.round(battle.mob.hp)} · stun ${battle.mob.stun.toFixed(1)}s · distance ${battle.distance.toFixed(1)}m${battle.dashing ? " · charging!" : ""}`;
+      status.textContent = `Mob HP ${Math.round(battle.mob.hp)} · stun ${battle.mob.stun.toFixed(1)}s · distance ${battle.distance.toFixed(1)}m${battle.usesBands ? ` (${battle.band})` : ""}${battle.dashing ? " · charging!" : ""}`;
     }, 100);
     const stopBattle = playBattle(
       canvas,

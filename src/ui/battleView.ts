@@ -1,5 +1,5 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
-import { DERIVED, ELEMENT_ICON, SKILLS, type SkillId } from "../core/skills";
+import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Pose } from "./characters";
 
 const W = 880;
@@ -424,6 +424,8 @@ function draw(
   if (scene.shake > 0) ctx.translate(rand(-scene.shake, scene.shake), rand(-scene.shake, scene.shake) * 0.6);
   drawBackground(ctx, scene, t, look.mobBoss);
 
+  if (battle.usesBands) drawBands(ctx, battle);
+
   if (battle.snareX !== null) {
     const sx = px(battle.snareX);
     ctx.font = "22px sans-serif";
@@ -517,6 +519,29 @@ function skillPose(s: FighterAnim["skill"], battle: Battle, t: number): Pose["sk
 }
 
 /** Per-skill impact: a big name callout plus effects loud enough to read at a glance. */
+const BAND_COLOR: Record<Band, string> = { close: "255,123,123", mid: "255,209,102", far: "110,231,160" };
+
+/** Ranger range bands as strips on the ground in front of the hero; the mob's band glows brighter. */
+function drawBands(ctx: CanvasRenderingContext2D, battle: Battle): void {
+  const h = battle.hero.x;
+  const edges: [Band, number, number][] = [
+    ["close", 0, BAND_EDGE.close], ["mid", BAND_EDGE.close, BAND_EDGE.mid], ["far", BAND_EDGE.mid, battle.hero.s.range],
+  ];
+  ctx.save();
+  ctx.font = "bold 11px sans-serif";
+  ctx.textAlign = "center";
+  for (const [band, a, b] of edges) {
+    const x0 = px(Math.min(ARENA.length, h + a));
+    const x1 = px(Math.min(ARENA.length, h + b));
+    const on = battle.band === band && battle.distance <= battle.hero.s.range + 1e-6;
+    ctx.fillStyle = `rgba(${BAND_COLOR[band]},${on ? 0.55 : 0.22})`;
+    ctx.fillRect(x0 + 1, GROUND + 2, x1 - x0 - 2, 10);
+    ctx.fillStyle = `rgba(${BAND_COLOR[band]},${on ? 1 : 0.6})`;
+    ctx.fillText(BAND_NAME[band], (x0 + x1) / 2, GROUND + 38);
+  }
+  ctx.restore();
+}
+
 function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 | -1): void {
   const k = SKILLS[skill];
   scene.floaters.push({ born: scene.now, side: dir === 1 ? "hero" : "mob", text: `${k.icon} ${k.name}`, color: "#ffd34d", size: 24, dx: 0 });

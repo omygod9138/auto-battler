@@ -50,6 +50,8 @@ export interface HeroClass {
   icon: string;
   desc: string;
   base: Stats;
+  /** Where the hero stands at the start of a fight, if not ARENA.heroStart. */
+  start?: number;
 }
 
 export const CLASSES: Record<ClassId, HeroClass> = {
@@ -60,8 +62,10 @@ export const CLASSES: Record<ClassId, HeroClass> = {
   },
   ranger: {
     id: "ranger", name: "Ranger", role: "Ranged", icon: "🏹",
-    desc: "Fast arrows from a distance. Kill it before it arrives.",
-    base: stats({ maxHp: 90, dmg: 8, interval: 0.75, range: 8, speed: 2.5 }),
+    desc: "Fast arrows from a distance. Each shot is strongest at its own range: Far, Mid or Close.",
+    base: stats({ maxHp: 90, dmg: 9, interval: 0.75, range: 8, speed: 2.5 }),
+    // Room behind to Disengage into.
+    start: 5,
   },
   mage: {
     id: "mage", name: "Mage", role: "Magic", icon: "🔮",
