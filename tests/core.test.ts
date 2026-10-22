@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Battle } from "../src/core/battle";
+import { ARENA, Battle, WALL_SLAM_MULT, WALL_SLAM_TIME } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
 import { MAX_LEVEL, SKILLS, heroStats } from "../src/core/skills";
@@ -137,10 +137,92 @@ describe("battle", () => {
     expect(combos).toContain("Combo! +33%");
   });
 
-  it("no combo without the opener", () => {
+  it("charge dashes in from a distance", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1 }, dummy, 1);
+    let startGap = 0;
+    for (let i = 0; i < 200 && !startGap; i++) {
+      b.step();
+      if (b.dashing) startGap = b.distance;
+    }
+    expect(startGap).toBeGreaterThan(5);
+    expect(startGap).toBeLessThanOrEqual(6);
+    while (b.dashing) b.step();
+    expect(b.events.some((e) => e.type === "damage" && e.skill === "charge")).toBe(true);
+    expect(b.distance).toBeLessThanOrEqual(1.3 + 1e-6);
+  });
+
+  it("spartan kick knocks back 2m, then charge combos for +3s stun", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1 }, dummy, 1);
+    const x0 = b.mob.x;
+    for (let i = 0; i < 600 && !b.events.some((e) => e.type === "damage" && e.skill === "spartanKick"); i++) b.step();
+    while (b.mob.push !== 0) b.step();
+    // The dummy never walks, so all of its movement is the knockback.
+    expect(b.mob.x - x0).toBeCloseTo(2, 5);
+    let stun = 0;
+    for (let i = 0; i < 100 && !stun; i++) {
+      const before = b.events.length;
+      b.step();
+      if (b.events.slice(before).some((e) => e.type === "damage" && e.skill === "charge")) stun = b.mob.stun;
+    }
+    // Lv1 charge stuns 1s; the combo adds 3s.
+    expect(stun).toBeCloseTo(4, 5);
+    expect(b.events.some((e) => e.type === "status" && e.label === "Combo! Stun +3s")).toBe(true);
+  });
+
+  it.each([1, 2, 3])("every charge is followed by a shield bash combo (lv %i)", (lv) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { charge: lv, spartanKick: lv, shieldBash: lv, heavyStrike: lv }, wall, 1);
+    // The fight drifts into the far wall; kicks must still open a gap there.
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    const count = (pred: (e: (typeof b.events)[number]) => boolean) => b.events.filter(pred).length;
+    const charges = count((e) => e.type === "damage" && e.skill === "charge");
+    expect(charges).toBeGreaterThan(4);
+    expect(count((e) => e.type === "status" && e.label === "Combo! Stun ×2")).toBe(charges);
+    expect(count((e) => e.type === "status" && e.label === "Combo! Stun +3s")).toBe(charges - 1);
+  });
+
+  it("a kick into the far wall slams: +33% damage taken for 5s", () => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { spartanKick: 1 }, wall, 1);
+    b.mob.x = ARENA.length;
+    let slamAt = -1;
+    for (let i = 0; i < 600 && slamAt < 0; i++) {
+      b.step();
+      const e = b.events.find((e) => e.type === "status" && e.label === "Wall Slam!");
+      if (e) slamAt = e.t;
+    }
+    expect(slamAt).toBeGreaterThan(0);
+    expect(b.mob.x).toBe(ARENA.length);
+    for (let i = 0; i < 8 * 20; i++) b.step();
+    const plain = (from: number, to: number) =>
+      b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" && !e.skill && !e.crit && e.t > from && e.t <= to ? [e.amount] : []));
+    const during = plain(slamAt, slamAt + WALL_SLAM_TIME - 0.1);
+    // Before the next kick (7s cooldown) slams again.
+    const after = plain(slamAt + WALL_SLAM_TIME + 0.1, slamAt + 6.9);
+    expect(during.length).toBeGreaterThan(0);
+    expect(after.length).toBeGreaterThan(0);
+    for (const d of during) expect(d).toBeCloseTo(12 * WALL_SLAM_MULT, 5);
+    for (const d of after) expect(d).toBeCloseTo(12, 5);
+  });
+
+  it("shield bash then heavy strike is a combo on its own, no charge needed", () => {
     const b = new Battle(CLASSES.warrior.base, { shieldBash: 1, heavyStrike: 1 }, dummy, 1);
     for (let i = 0; i < 400; i++) b.step();
+    const labels = b.events.flatMap((e) => (e.type === "status" ? [e.label] : []));
+    expect(labels).toContain("Combo! +33%");
+    expect(labels).not.toContain("Combo! Stun ×2");
+  });
+
+  it("no combo from a single skill", () => {
+    const b = new Battle(CLASSES.warrior.base, { heavyStrike: 1 }, dummy, 1);
+    for (let i = 0; i < 400; i++) b.step();
     expect(b.events.some((e) => e.type === "status" && e.label.startsWith("Combo"))).toBe(false);
+  });
+
+  it("combo descriptions come from the combo list", () => {
+    expect(SKILLS.heavyStrike.desc(1)).toContain("after Shield Bash: +33% damage");
+    expect(SKILLS.shieldBash.desc(1)).toContain("after Charge: stun ×2; Heavy Strike next: +33% damage");
+    expect(SKILLS.spartanKick.desc(1)).toContain("Charge next: stun +3s");
   });
 
   it("times out as a loss", () => {

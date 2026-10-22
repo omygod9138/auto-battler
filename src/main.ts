@@ -13,6 +13,7 @@ import {
 } from "./core/run";
 import { playBattle } from "./ui/battleView";
 import { portrait } from "./ui/characters";
+import { startSandbox } from "./ui/sandbox";
 import { loadSprites } from "./ui/sprites";
 
 const app = document.getElementById("app")!;
@@ -57,6 +58,7 @@ function renderTitle(): void {
     <div class="title-screen">
       <h1>⚔️ Fjord Battlegrounds</h1>
       <p class="sub">Pick a skill. Beat the mob. Each win brings a stronger one. One loss and it's over.</p>
+      ${import.meta.env.DEV ? `<p><a href="?sandbox">🧪 Sandbox</a> <span class="muted">(dev only)</span></p>` : ""}
       <div class="cards three">
         ${(Object.keys(CLASSES) as ClassId[])
           .map((id) => {
@@ -262,4 +264,5 @@ app.addEventListener("click", (e) => {
 });
 
 // Missing art just means the procedural characters are used.
-loadSprites().finally(render);
+if (new URLSearchParams(location.search).has("sandbox")) loadSprites().finally(() => startSandbox(app));
+else loadSprites().finally(render);

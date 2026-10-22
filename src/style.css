@@ -120,3 +120,15 @@ h2.loss { color: var(--bad); }
 .over { max-width: 560px; margin: 20px auto; text-align: center; }
 .over .panel.hero { text-align: left; margin: 14px 0; }
 .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+/* Dev sandbox */
+.sandbox { max-width: 960px; margin: 0 auto; padding: 12px; display: grid; gap: 10px; }
+.sandbox h2 a { font-size: 0.6em; margin-left: 10px; }
+.sb-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.sb-skills { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; }
+.sb-skill { opacity: 0.6; white-space: nowrap; }
+.sb-skill.on { opacity: 1; font-weight: 600; }
+.sb-bottom { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+.sb-log { max-height: 220px; overflow: auto; margin: 0; padding-left: 0; list-style: none; font-size: 0.9em; }
+.sb-log .combo { color: #ffd34d; }
+@media (max-width: 640px) { .sb-bottom { grid-template-columns: 1fr; } }

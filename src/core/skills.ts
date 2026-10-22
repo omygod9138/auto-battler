@@ -2,7 +2,7 @@ import type { ClassId, Stats } from "./stats";
 
 export type SkillId =
   // Warrior
-  | "heavyStrike" | "bloodlust" | "ironSkin" | "shieldBash" | "berserk" | "thorns" | "secondWind" | "charge"
+  | "heavyStrike" | "bloodlust" | "ironSkin" | "shieldBash" | "berserk" | "thorns" | "secondWind" | "charge" | "spartanKick"
   // Ranger
   | "multishot" | "poison" | "eagleEye" | "knockback" | "rapidFire" | "evasion" | "headshot" | "snare"
   // Mage
@@ -30,20 +30,32 @@ export interface SkillDef {
 export const MAX_LEVEL = 3;
 
 export interface Combo {
-  /** Attack skills hit in this order, each within COMBO_WINDOW of the one before; the last one gets the bonus. */
-  seq: SkillId[];
+  /** Two attack skills landing back to back, the second within COMBO_WINDOW of the first; the second gets the bonus. */
+  pair: [SkillId, SkillId];
   dmgMult?: number;
   stunMult?: number;
+  /** Seconds added to the last hit's stun. */
+  stunAdd?: number;
   label: string;
 }
 
 export const COMBO_WINDOW = 4;
 
-/** Longest first, so a three-step chain wins over its two-step prefix. */
+/** Every combo is a pair; chains like Kick → Charge → Bash → Heavy are just pairs in a row. */
 export const COMBOS: Combo[] = [
-  { seq: ["charge", "shieldBash", "heavyStrike"], dmgMult: 1.33, label: "Combo! +33%" },
-  { seq: ["charge", "shieldBash"], stunMult: 2, label: "Combo! Stun ×2" },
+  { pair: ["spartanKick", "charge"], stunAdd: 3, label: "Combo! Stun +3s" },
+  { pair: ["charge", "shieldBash"], stunMult: 2, label: "Combo! Stun ×2" },
+  { pair: ["shieldBash", "heavyStrike"], dmgMult: 1.33, label: "Combo! +33%" },
 ];
+
+/** What a combo does, for skill descriptions. */
+export function comboEffect(c: Combo): string {
+  return [
+    c.dmgMult ? `+${Math.round((c.dmgMult - 1) * 100)}% damage` : "",
+    c.stunMult ? `stun ×${c.stunMult}` : "",
+    c.stunAdd ? `stun +${c.stunAdd}s` : "",
+  ].filter(Boolean).join(", ");
+}
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 /** Trims float noise such as 1.2000000000000002. */
@@ -58,7 +70,9 @@ export const SKILL_NUM = {
   berserk: (lv: number) => 0.4 * lv,
   thorns: (lv: number) => 0.15 + 0.15 * lv,
   secondWind: (lv: number) => 0.25 + 0.15 * lv,
-  charge: (lv: number) => ({ mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
+  // Same cooldown as Shield Bash, so every Charge can be followed by a Bash.
+  charge: (lv: number) => ({ cd: 6, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
+  spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 2 }),
   multishot: (lv: number) => ({ arrows: lv, mult: 0.5 }),
   poison: (lv: number) => ({ dps: 1 + 1.5 * lv, dur: 4, maxStacks: 3 + 2 * lv }),
   knockback: (lv: number) => ({ chance: 0.25 + 0.1 * lv, dist: 1.5 }),
@@ -77,13 +91,13 @@ const S = SKILL_NUM;
 
 export const SKILLS: Record<SkillId, SkillDef> = {
   heavyStrike: { id: "heavyStrike", name: "Heavy Strike", icon: "🔨", cls: "warrior", kind: "proc", cat: "attack",
-    desc: (lv) => `Every ${nth(S.heavyStrike(lv).every)} hit deals ×${num(S.heavyStrike(lv).mult)}. Combo: after Charge → Shield Bash, +33% damage.` },
+    desc: (lv) => `Every ${nth(S.heavyStrike(lv).every)} hit deals ×${num(S.heavyStrike(lv).mult)}.` },
   bloodlust: { id: "bloodlust", name: "Bloodlust", icon: "🩸", cls: "warrior", kind: "proc", cat: "passive",
     desc: (lv) => `Heal ${pct(S.bloodlust(lv))} of damage you deal.` },
   ironSkin: { id: "ironSkin", name: "Iron Skin", icon: "🛡️", cls: "warrior", kind: "passive", cat: "defense",
     desc: (lv) => `Take ${pct(0.1 * lv + 0.05)} less damage.`, apply: (s, lv) => { s.dmgTaken *= 1 - (0.1 * lv + 0.05); } },
   shieldBash: { id: "shieldBash", name: "Shield Bash", icon: "💥", cls: "warrior", kind: "active", cat: "attack",
-    desc: (lv) => `Every ${S.shieldBash(lv).cd}s: hit ×${num(S.shieldBash(lv).mult)} and stun ${num(S.shieldBash(lv).stun)}s. Combo: after Charge, stun ×2.` },
+    desc: (lv) => `Every ${S.shieldBash(lv).cd}s: hit ×${num(S.shieldBash(lv).mult)} and stun ${num(S.shieldBash(lv).stun)}s.` },
   berserk: { id: "berserk", name: "Berserk", icon: "😤", cls: "warrior", kind: "passive", cat: "passive",
     desc: (lv) => `Up to +${pct(S.berserk(lv))} attack speed as your HP drops.` },
   thorns: { id: "thorns", name: "Thorns", icon: "🌵", cls: "warrior", kind: "proc", cat: "defense",
@@ -91,8 +105,9 @@ export const SKILLS: Record<SkillId, SkillDef> = {
   secondWind: { id: "secondWind", name: "Second Wind", icon: "🌬️", cls: "warrior", kind: "proc", cat: "defense",
     desc: (lv) => `Once per fight, at 30% HP heal ${pct(S.secondWind(lv))}.` },
   charge: { id: "charge", name: "Charge", icon: "🐂", cls: "warrior", kind: "proc", cat: "attack",
-    desc: (lv) => `First hit deals ×${S.charge(lv).mult} and stuns ${S.charge(lv).stun}s. Move faster.`,
-    apply: (s) => { s.speed += 2; } },
+    desc: (lv) => `Every ${S.charge(lv).cd}s: from up to ${S.charge(lv).range}m away, dash in for ×${S.charge(lv).mult} and stun ${S.charge(lv).stun}s.` },
+  spartanKick: { id: "spartanKick", name: "Spartan Kick", icon: "🦶", cls: "warrior", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${S.spartanKick(lv).cd}s: kick for ×${num(S.spartanKick(lv).mult)} and knock the mob back ${S.spartanKick(lv).push}m. Into the far wall: Wall Slam, +33% damage taken for 5s.` },
 
   multishot: { id: "multishot", name: "Multishot", icon: "🎯", cls: "ranger", kind: "proc", cat: "attack",
     desc: (lv) => `Fire ${S.multishot(lv).arrows} extra arrow(s) at ${pct(S.multishot(lv).mult)} damage.` },
@@ -145,6 +160,17 @@ export const SKILLS: Record<SkillId, SkillDef> = {
   executioner: { id: "executioner", name: "Executioner", icon: "🪓", cls: "any", kind: "proc",
     desc: (lv) => `×${S.executioner(lv).mult} damage to mobs under ${pct(S.executioner(lv).below)} HP.` },
 };
+
+// Descriptions list each skill's combos straight from COMBOS, so the text can't drift from the rules.
+for (const def of Object.values(SKILLS)) {
+  const notes = COMBOS.flatMap((c) =>
+    c.pair[1] === def.id ? [`after ${SKILLS[c.pair[0]].name}: ${comboEffect(c)}`]
+    : c.pair[0] === def.id ? [`${SKILLS[c.pair[1]].name} next: ${comboEffect(c)}`] : [],
+  );
+  if (!notes.length) continue;
+  const base = def.desc;
+  def.desc = (lv) => `${base(lv)} Combo — ${notes.join("; ")}.`;
+}
 
 export type SkillLevels = Partial<Record<SkillId, number>>;
 

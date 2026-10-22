@@ -6,13 +6,17 @@ const W = 880;
 const H = 320;
 const GROUND = 240;
 const PAD = 40;
-const SCALE = (W - PAD * 2) / ARENA.length;
+/** Room on the right for the wall, so a mob slammed into it stays fully on screen. */
+const PAD_R = 96;
+const SCALE = (W - PAD - PAD_R) / ARENA.length;
 
 const px = (x: number) => PAD + x * SCALE;
 /** Characters are drawn larger than their rig units. */
 const CHAR_SCALE = 1.35;
 /** Visual gap so melee fighters stand face to face instead of overlapping. */
 const STANDOFF = 16;
+/** Left face of the far wall: just behind a mob standing at the arena's end. */
+const WALL_X = W - PAD_R + STANDOFF + 30;
 /** Seconds a skill clip takes to play from the moment its hit lands. */
 const SKILL_ANIM = 0.5;
 const fx = (battle: Battle, side: Side) => px(side === "hero" ? battle.hero.x : battle.mob.x) + (side === "hero" ? -STANDOFF : STANDOFF);
@@ -34,6 +38,8 @@ interface Floater {
   color: string;
   size: number;
   dx: number;
+  /** Extra height, to stack callouts that land together. */
+  dy?: number;
 }
 
 interface Shot {
@@ -86,6 +92,12 @@ class Scene {
   shots: Shot[] = [];
   shake = 0;
   now = 0;
+  /** Real seconds the sim stays frozen, so big hits land with weight. */
+  hitstop = 0;
+  /** When the mob was last slammed into the wall, for cracks. */
+  wallHit = -9;
+  /** A large centred callout, for combos. */
+  banner: { text: string; born: number } | null = null;
   anim: Record<Side, FighterAnim> = {
     hero: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null, skill: null },
     mob: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null, skill: null },
@@ -170,7 +182,8 @@ export function playBattle(
         const color = target === "mob" ? (e.crit ? "#ffd84a" : "#ffffff") : "#ff6b5e";
         const absorbed = e.amount < 0.5;
         scene.floaters.push({ born: scene.now, side: target, text: absorbed ? "absorbed" : `${Math.round(e.amount)}${e.crit ? "!" : ""}`, color: absorbed ? "#6fb6ff" : color, size: absorbed ? 14 : e.crit ? 26 : 18, dx });
-        if (e.label) scene.floaters.push({ born: scene.now, side: attacker, text: e.label, color: "#9fd3ff", size: 15, dx: 0 });
+        if (e.skill) skillImpact(scene, e.skill, x, y, dir);
+        else if (e.label) scene.floaters.push({ born: scene.now, side: attacker, text: e.label, color: "#9fd3ff", size: 15, dx: 0 });
         break;
       }
       case "dot": {
@@ -194,6 +207,20 @@ export function playBattle(
         scene.add({ kind: "ring", dur: 0.25, x, y, color: "rgba(200,220,255,0.6)", size: 26, dir });
         break;
       case "status":
+        if (e.label.startsWith("Combo")) {
+          scene.banner = { text: e.label, born: scene.now };
+          scene.hitstop = Math.max(scene.hitstop, 0.2);
+          scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir });
+          break;
+        }
+        if (e.label === "Wall Slam!") {
+          scene.wallHit = scene.now;
+          scene.shake = Math.max(scene.shake, 12);
+          scene.hitstop = Math.max(scene.hitstop, 0.15);
+          scene.burst(WALL_X, GROUND - 50, 30, "rgba(150,140,130,0.9)", 200, 400, 6);
+          scene.floaters.push({ born: scene.now, side: "mob", text: "🧱 Wall Slam! +33%", color: "#ff9a4d", size: 22, dx: 0, dy: 30 });
+          break;
+        }
         scene.floaters.push({ born: scene.now, side: target, text: e.label, color: "#c9a7ff", size: 17, dx: 0 });
         if (e.label === "Enraged!") {
           scene.shake = 10;
@@ -209,7 +236,8 @@ export function playBattle(
     const dt = Math.min(0.05, (nowMs - last) / 1000);
     last = nowMs;
     scene.now = (nowMs - start) / 1000;
-    acc += dt * speed();
+    if (scene.hitstop > 0) scene.hitstop -= dt;
+    else acc += dt * speed();
     while (acc >= TICK && !battle.outcome) {
       battle.step();
       acc -= TICK;
@@ -318,6 +346,14 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
     const moving = isAdvancing(battle, side);
     a.moving += ((moving ? 1 : 0) - a.moving) * Math.min(1, dt * 10);
     if (moving || a.moving > 0.05) a.walk += dt * 9;
+    const f = side === "hero" ? battle.hero : battle.mob;
+    const dashing = side === "hero" && battle.dashing;
+    if (dashing) a.walk += dt * 14;
+    // Dust kicks up behind a dash and under a knocked-back fighter.
+    if ((dashing || f.push !== 0) && !reduced) {
+      const fx0 = px(f.x);
+      for (let i = 0; i < 2; i++) scene.particles.push({ x: fx0 + rand(-6, 6), y: GROUND - rand(0, 6), vx: (dashing ? -1 : 1) * rand(30, 90), vy: rand(-40, -10), life: 0, max: rand(0.3, 0.6), size: rand(3, 6), color: "rgba(190,170,140,0.7)", gravity: 60 });
+    }
   }
 }
 
@@ -350,7 +386,8 @@ function draw(
     // Melee lunges forward then eases back; ranged only rocks slightly.
     const lk = (t - a.lunge) / 0.28;
     const attack = lk >= 0 && lk < 1 ? lk : -1;
-    const lunge = attack >= 0 ? Math.sin(attack * Math.PI) * (melee ? 12 : 3) * facing : 0;
+    const skillHit = a.skill !== null && t - a.skill.at < 0.3;
+    const lunge = attack >= 0 ? Math.sin(attack * Math.PI) * (melee ? (skillHit ? 24 : 12) : 3) * facing : 0;
     const hk = (t - a.hurt) / 0.25;
     const hurt = hk >= 0 && hk < 1 ? hk : -1;
     const recoil = hurt >= 0 ? (1 - hurt) * -7 * facing : 0;
@@ -381,6 +418,12 @@ function draw(
       aura: enraged ? "rgba(255,60,40,0.35)" : side === "hero" && f.shield > 0 ? "rgba(111,182,255,0.28)" : null,
       t,
     });
+    if (f.vuln > 0) {
+      // Wall Slam debuff marker beside the health bar.
+      ctx.font = "16px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("🧱", x + 42, GROUND - heights[side] - 10);
+    }
     drawBars(ctx, x, heights[side], f.hp / f.s.maxHp, side === "hero" ? "#5fe07a" : "#ff7a6b", f.shield / f.s.maxHp, f.stun > 0, f.root > 0, t, 0);
   }
 
@@ -397,11 +440,69 @@ function draw(
     ctx.globalAlpha = 1;
   }
   drawFloaters(ctx, scene, battle, heights);
+  drawBanner(ctx, scene);
 
   ctx.fillStyle = "rgba(255,255,255,0.75)";
   ctx.font = "13px system-ui, sans-serif";
   ctx.textAlign = "left";
   ctx.fillText(`${battle.time.toFixed(1)}s`, 10, 18);
+}
+
+/** Per-skill impact: a big name callout plus effects loud enough to read at a glance. */
+function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 | -1): void {
+  const k = SKILLS[skill];
+  scene.floaters.push({ born: scene.now, side: dir === 1 ? "hero" : "mob", text: `${k.icon} ${k.name}`, color: "#ffd34d", size: 24, dx: 0 });
+  const hit = x - dir * 14;
+  switch (skill) {
+    case "shieldBash":
+      scene.add({ kind: "ring", dur: 0.45, x: hit, y, color: "#bfe6ff", size: 80, dir });
+      scene.add({ kind: "ring", dur: 0.3, x: hit, y, color: "#ffffff", size: 44, dir });
+      scene.burst(hit, y, 28, "#d8f0ff", 260, 200, 4);
+      scene.shake = Math.max(scene.shake, 9);
+      scene.hitstop = Math.max(scene.hitstop, 0.12);
+      break;
+    case "heavyStrike":
+      scene.add({ kind: "ring", dur: 0.4, x, y: GROUND - 4, color: "#ffb347", size: 70, dir });
+      scene.burst(x, GROUND - 2, 34, "rgba(170,140,100,0.9)", 220, 500, 6);
+      scene.burst(x, y, 16, "#ffd27a", 240, 300, 4);
+      scene.shake = Math.max(scene.shake, 10);
+      scene.hitstop = Math.max(scene.hitstop, 0.14);
+      break;
+    case "charge":
+      scene.add({ kind: "ring", dur: 0.5, x: hit, y, color: "#ffd34d", size: 90, dir });
+      scene.burst(hit, y, 30, "#ffe08a", 300, 250, 5);
+      scene.shake = Math.max(scene.shake, 11);
+      scene.hitstop = Math.max(scene.hitstop, 0.14);
+      break;
+    case "spartanKick":
+      scene.add({ kind: "ring", dur: 0.35, x: hit, y: y + 16, color: "#ffffff", size: 60, dir });
+      scene.burst(hit, y + 16, 20, "#f0e6d8", 240, 250, 4);
+      scene.shake = Math.max(scene.shake, 7);
+      scene.hitstop = Math.max(scene.hitstop, 0.1);
+      break;
+    default:
+      scene.shake = Math.max(scene.shake, 5);
+  }
+}
+
+function drawBanner(ctx: CanvasRenderingContext2D, scene: Scene): void {
+  const b = scene.banner;
+  if (!b) return;
+  const age = scene.now - b.born;
+  if (age > 1.6) {
+    scene.banner = null;
+    return;
+  }
+  const pop = age < 0.15 ? 0.5 + (age / 0.15) * 0.7 : age < 0.25 ? 1.2 - ((age - 0.15) / 0.1) * 0.2 : 1;
+  ctx.globalAlpha = Math.max(0, 1 - Math.max(0, age - 1.1) * 2);
+  ctx.textAlign = "center";
+  ctx.font = `900 ${Math.round(34 * pop)}px system-ui, sans-serif`;
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = "rgba(60,20,0,0.85)";
+  ctx.strokeText(b.text, W / 2, 70);
+  ctx.fillStyle = "#ffd34d";
+  ctx.fillText(b.text, W / 2, 70);
+  ctx.globalAlpha = 1;
 }
 
 /** True while a fighter is walking toward its foe, mirroring the movement rules in Battle. */
@@ -475,8 +576,45 @@ function drawBackground(ctx: CanvasRenderingContext2D, scene: Scene, t: number, 
     ctx.stroke();
   }
 
+  drawWall(ctx, scene, t);
+
   ctx.fillStyle = "rgba(255,255,255,0.7)";
   for (const f of scene.ambient) ctx.fillRect(f.x, f.y, f.size, f.size);
+}
+
+/** The rock wall at the far end, which Spartan Kick can slam the mob into. */
+function drawWall(ctx: CanvasRenderingContext2D, scene: Scene, t: number): void {
+  const x0 = WALL_X;
+  const top = GROUND - 150;
+  ctx.fillStyle = "#4d4a52";
+  ctx.beginPath();
+  ctx.moveTo(W + 20, top - 10);
+  for (let y = top; y <= GROUND; y += 18) ctx.lineTo(x0 + ((y * 37) % 9) - 4, y);
+  ctx.lineTo(W + 20, GROUND + 4);
+  ctx.fill();
+  ctx.strokeStyle = "#35333a";
+  ctx.lineWidth = 2;
+  for (let y = top + 20; y < GROUND; y += 26) {
+    ctx.beginPath();
+    ctx.moveTo(x0 + 2, y);
+    ctx.lineTo(W, y + 4);
+    ctx.stroke();
+  }
+  const k = (t - scene.wallHit) / 1.5;
+  if (k >= 0 && k < 1) {
+    ctx.globalAlpha = 1 - k;
+    ctx.strokeStyle = "#1c1b1f";
+    ctx.lineWidth = 2.5;
+    const cy = GROUND - 50;
+    for (const [dx, dy] of [[-10, -26], [-6, 22], [8, -18], [10, 30], [-12, 4]]) {
+      ctx.beginPath();
+      ctx.moveTo(x0 + 4, cy);
+      ctx.lineTo(x0 + 4 + dx * 0.5, cy + dy * 0.5);
+      ctx.lineTo(x0 + 4 + dx, cy + dy);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
 }
 
 interface FighterPose {
@@ -680,8 +818,10 @@ function drawFloaters(ctx: CanvasRenderingContext2D, scene: Scene, battle: Battl
     const pop = age < 0.12 ? 0.6 + (age / 0.12) * 0.6 : age < 0.2 ? 1.2 - ((age - 0.12) / 0.08) * 0.2 : 1;
     ctx.globalAlpha = Math.max(0, 1 - Math.max(0, age - 0.5) * 1.6);
     ctx.font = `800 ${Math.round(f.size * pop)}px system-ui, sans-serif`;
-    const x = fx(battle, f.side) + f.dx * (1 + age);
-    const y = GROUND - heights[f.side] - 34 - age * 55;
+    const y = GROUND - heights[f.side] - 34 - (f.dy ?? 0) - age * 55;
+    // Keep text inside the canvas when the fight is at either end.
+    const half = ctx.measureText(f.text).width / 2 + 6;
+    const x = Math.max(half, Math.min(W - half, fx(battle, f.side) + f.dx * (1 + age)));
     ctx.lineWidth = 4;
     ctx.strokeStyle = "rgba(0,0,0,0.7)";
     ctx.strokeText(f.text, x, y);
