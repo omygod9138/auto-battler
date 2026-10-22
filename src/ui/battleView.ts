@@ -1,6 +1,6 @@
-import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
+import { ARENA, TICK, WINDUP, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { SKILLS, type SkillId } from "../core/skills";
-import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale } from "./characters";
+import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Pose } from "./characters";
 
 const W = 880;
 const H = 320;
@@ -87,7 +87,7 @@ interface FighterAnim {
   moving: number;
   deathAt: number | null;
   /** The skill behind the latest hit and when it landed. */
-  skill: { id: SkillId; at: number } | null;
+  skill: { id: SkillId; at: number; phase: "windup" | "strike" | "full"; simAt: number } | null;
 }
 
 /** Real-time (not battle-time) animation state, so idle motion keeps going while paused or after the end. */
@@ -106,6 +106,8 @@ class Scene {
   freezeIn = -1;
   /** Real time the last freeze ended. */
   freezeEnded = -99;
+  /** Battle time at which to freeze, for a combo whose wind-up ends then, and the banner to show. */
+  freezeAtSim: { t: number; text: string } | null = null;
   /** When the mob was last slammed into the wall, for cracks. */
   wallHit = -9;
   /** A large centred callout, for combos. */
@@ -177,7 +179,7 @@ export function playBattle(
         const attacker: Side = target === "mob" ? "hero" : "mob";
         const big = e.crit || (e.label !== undefined && e.label !== "Zap!");
         scene.anim[target].hurt = scene.now;
-        if (e.skill) scene.anim[attacker].skill = { id: e.skill, at: scene.now };
+        if (e.skill) scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: WINDUP[e.skill] ? "strike" : "full", simAt: e.t };
         if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
           scene.anim[attacker].lunge = scene.now;
           scene.add({ kind: "slash", dur: 0.22, x: x - dir * 10, y, color: e.fx === "claw" ? "#ff9f9f" : "#ffffff", size: big ? 46 : 34, dir });
@@ -217,8 +219,18 @@ export function playBattle(
         scene.anim[target].lunge = -9;
         scene.add({ kind: "ring", dur: 0.25, x, y, color: "rgba(200,220,255,0.6)", size: 26, dir });
         break;
+      case "windup":
+        scene.anim.hero.skill = { id: e.skill, at: scene.now, phase: "windup", simAt: e.t };
+        // A combo pauses as the wind-up ends: momentum gathered, swing still to come.
+        if (e.combo && scene.freeze <= 0 && scene.real - scene.freezeEnded > COMBO_PAUSE_GAP) {
+          // Freeze before the step that lands the hit (it lands once battle time reaches the wind-up's end).
+          scene.freezeAtSim = { t: e.t + (WINDUP[e.skill] ?? 0) - TICK - 1e-6, text: e.combo };
+        }
+        break;
       case "status":
         if (e.label.startsWith("Combo")) {
+          // Its wind-up already paused under this banner; don't pop it again.
+          if (scene.banner?.text === e.label && scene.real - scene.banner.born < COMBO_PAUSE + 0.6) break;
           // Only combos stop the action: a solo skill never pauses.
           scene.banner = { text: e.label, born: scene.real };
           if (scene.freeze <= 0 && scene.real - scene.freezeEnded > COMBO_PAUSE_GAP) scene.freezeIn = COMBO_PAUSE_DELAY;
@@ -264,6 +276,15 @@ export function playBattle(
       }
     }
     while (acc >= TICK && !battle.outcome) {
+      if (scene.freezeAtSim && battle.time >= scene.freezeAtSim.t) {
+        scene.freeze = COMBO_PAUSE;
+        scene.shake = 0;
+        scene.banner = { text: scene.freezeAtSim.text, born: scene.real };
+        scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir: 1 });
+        scene.freezeAtSim = null;
+        acc = 0;
+        break;
+      }
       battle.step();
       acc -= TICK;
     }
@@ -411,7 +432,7 @@ function draw(
     // Melee lunges forward then eases back; ranged only rocks slightly.
     const lk = (t - a.lunge) / 0.28;
     const attack = lk >= 0 && lk < 1 ? lk : -1;
-    const skillHit = a.skill !== null && t - a.skill.at < 0.3;
+    const skillHit = a.skill !== null && a.skill.phase !== "windup" && t - a.skill.at < 0.3;
     const lunge = attack >= 0 ? Math.sin(attack * Math.PI) * (melee ? (skillHit ? 24 : 12) : 3) * facing : 0;
     const hk = (t - a.hurt) / 0.25;
     const hurt = hk >= 0 && hk < 1 ? hk : -1;
@@ -430,7 +451,7 @@ function draw(
       windup: windup(battle, side),
       hurt,
       death: death ?? undefined,
-      skill: a.skill && t - a.skill.at < SKILL_ANIM ? { id: a.skill.id, p: (t - a.skill.at) / SKILL_ANIM } : undefined,
+      skill: skillPose(a.skill, battle, t),
     });
     drawFighter(ctx, layer, {
       x, facing, h: heights[side],
@@ -471,6 +492,13 @@ function draw(
   ctx.font = "13px system-ui, sans-serif";
   ctx.textAlign = "left";
   ctx.fillText(`${battle.time.toFixed(1)}s`, 10, 18);
+}
+
+function skillPose(s: FighterAnim["skill"], battle: Battle, t: number): Pose["skill"] {
+  if (!s) return undefined;
+  // The wind-up follows battle time, so it holds still through a freeze and ends as the hit lands.
+  if (s.phase === "windup") return { id: s.id, phase: s.phase, p: Math.min(1, (battle.time - s.simAt) / (WINDUP[s.id] ?? 1)) };
+  return t - s.at < SKILL_ANIM ? { id: s.id, phase: s.phase, p: (t - s.at) / SKILL_ANIM } : undefined;
 }
 
 /** Per-skill impact: a big name callout plus effects loud enough to read at a glance. */

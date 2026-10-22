@@ -35,11 +35,16 @@ export type BattleEvent =
   | { t: number; type: "dot"; target: Side; amount: number; kind: "poison" | "burn" | "thorns" }
   | { t: number; type: "heal"; target: Side; amount: number }
   | { t: number; type: "dodge"; target: Side }
-  | { t: number; type: "status"; target: Side; label: string };
+  | { t: number; type: "status"; target: Side; label: string }
+  /** A skill starts winding up; its hit lands WINDUP[skill] seconds later. combo is the label it will complete. */
+  | { t: number; type: "windup"; target: Side; skill: SkillId; combo?: string };
 
 export type Outcome = "win" | "loss";
 
 type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" | "charge" | "spartanKick";
+
+/** Skills that wind up before they hit, in seconds, so the art can gather momentum first. */
+export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3 };
 
 /** Charge dash and knockback slide speeds, in arena units per second. */
 const DASH_SPEED = 16;
@@ -65,6 +70,8 @@ export class Battle {
   private chargedAt = -99;
   /** The hero is mid Charge dash. */
   dashing = false;
+  /** A wound-up skill waiting to land. */
+  private pending: { skill: SkillId; at: number } | null = null;
   /** The last attack skill and when it landed, for combos. */
   private lastSkill: SkillId | null = null;
   private lastSkillAt = -99;
@@ -180,9 +187,14 @@ export class Battle {
   private act(me: Fighter, foe: Fighter): void {
     if (me.stun > 0 || me.push !== 0) return;
     if (me.side === "hero" && this.dashing) return this.dash();
+    if (me.side === "hero" && this.pending) {
+      if (this.time >= this.pending.at - 1e-9) this.land(this.pending.skill);
+      return;
+    }
     const dist = Math.abs(foe.x - me.x);
     if (me.side === "hero") this.castActives(dist);
-    if (this.outcome) return;
+    // A skill that just started (dash or wind-up) takes the rest of the tick.
+    if (this.outcome || (me.side === "hero" && (this.dashing || this.pending))) return;
 
     if (dist > me.s.range + 1e-6) {
       if (me.root > 0) return;
@@ -256,11 +268,8 @@ export class Battle {
     const awaitCharge = this.lv("charge") > 0 && !this.charged;
     const saveBash = this.lv("charge") > 0 && this.lv("spartanKick") > 0 && this.time - this.chargedAt > COMBO_WINDOW;
     if (ready("shieldBash") && inRange && !awaitCharge && !saveBash) {
-      const n = N.shieldBash(this.lv("shieldBash"));
       this.cds.set("shieldBash", this.cooldown("shieldBash"));
-      const c = this.combo("shieldBash");
-      this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Bash!", "shieldBash");
-      this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
+      return this.windUp("shieldBash");
     }
     // Kick only when Charge (and the Bash after it) can follow, so the knockback sets up the combo.
     if (ready("spartanKick") && dist <= h.s.range + 1e-6 && !awaitCharge && (!this.lv("charge") || (ready("charge") && bashReady))) {
@@ -297,12 +306,34 @@ export class Battle {
     }
   }
 
+  /** Start a wound-up skill; it lands from act() once WINDUP has passed. */
+  private windUp(skill: SkillId): void {
+    this.pending = { skill, at: this.time + (WINDUP[skill] ?? 0) };
+    this.emit({ t: this.time, type: "windup", target: "mob", skill, combo: this.peekCombo(skill)?.label });
+  }
+
+  private land(skill: SkillId): void {
+    this.pending = null;
+    const h = this.hero;
+    if (skill === "shieldBash") {
+      const n = N.shieldBash(this.lv("shieldBash"));
+      const c = this.combo("shieldBash");
+      this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Bash!", "shieldBash");
+      this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
+    }
+  }
+
+  /** The combo a skill would complete if it landed now. */
+  private peekCombo(skill: SkillId): Combo | undefined {
+    const prev = this.time - this.lastSkillAt <= COMBO_WINDOW ? this.lastSkill : null;
+    return COMBOS.find(({ pair }) => pair[0] === prev && pair[1] === skill);
+  }
+
   /** Record an attack skill and return the combo it completes, if any. */
   private combo(skill: SkillId): Combo | undefined {
-    const prev = this.time - this.lastSkillAt <= COMBO_WINDOW ? this.lastSkill : null;
+    const c = this.peekCombo(skill);
     this.lastSkill = skill;
     this.lastSkillAt = this.time;
-    const c = COMBOS.find(({ pair }) => pair[0] === prev && pair[1] === skill);
     if (c) this.emit({ t: this.time, type: "status", target: "hero", label: c.label });
     return c;
   }

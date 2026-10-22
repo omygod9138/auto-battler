@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ARENA, Battle, WALL_SLAM_MULT, WALL_SLAM_TIME } from "../src/core/battle";
+import { ARENA, Battle, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
 import { MAX_LEVEL, SKILLS, heroStats } from "../src/core/skills";
@@ -211,6 +211,15 @@ describe("battle", () => {
     const labels = b.events.flatMap((e) => (e.type === "status" ? [e.label] : []));
     expect(labels).toContain("Combo! +33%");
     expect(labels).not.toContain("Combo! Stun ×2");
+  });
+
+  it("shield bash winds up first and announces the combo it will land", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, shieldBash: 1 }, dummy, 1);
+    for (let i = 0; i < 300; i++) b.step();
+    const wind = b.events.find((e) => e.type === "windup");
+    const hit = b.events.find((e) => e.type === "damage" && e.skill === "shieldBash");
+    expect(wind?.type === "windup" && wind.combo).toBe("Combo! Stun ×2");
+    expect(hit!.t - wind!.t).toBeCloseTo(WINDUP.shieldBash!, 5);
   });
 
   it("no combo from a single skill", () => {
