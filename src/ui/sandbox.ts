@@ -2,7 +2,7 @@
 // round's mob, slow time down, and read a log of skill hits and combos.
 import { Battle, type BattleEvent } from "../core/battle";
 import { mobForRound } from "../core/mobs";
-import { COMBOS, MAX_LEVEL, comboEffect, SKILLS, heroStats, type SkillId, type SkillLevels } from "../core/skills";
+import { COMBOS, MAX_LEVEL, REACTIONS, comboEffect, reactionEffect, SKILLS, heroStats, type SkillId, type SkillLevels } from "../core/skills";
 import { CLASSES, stats, type ClassId } from "../core/stats";
 import { playBattle } from "./battleView";
 
@@ -19,6 +19,9 @@ const PRESETS: { name: string; cls: ClassId; levels: SkillLevels }[] = [
   { name: "Warrior: full combo", cls: "warrior", levels: { charge: 1, spartanKick: 1, shieldBash: 1, heavyStrike: 1 } },
   { name: "Warrior: Kick → Charge", cls: "warrior", levels: { charge: 1, spartanKick: 1 } },
   { name: "Warrior: Charge → Bash → Heavy", cls: "warrior", levels: { charge: 1, shieldBash: 1, heavyStrike: 1 } },
+  { name: "Mage: all four elements", cls: "mage", levels: { fireball: 1, gust: 1, tidalWave: 1, stoneSpike: 1 } },
+  { name: "Mage: Fire + Earth (Lava)", cls: "mage", levels: { fireball: 1, stoneSpike: 1 } },
+  { name: "Mage: Water + Air (Storm)", cls: "mage", levels: { tidalWave: 1, gust: 1 } },
 ];
 
 /** Never hits back and barely dies, so combos can be watched over and over. */
@@ -29,7 +32,10 @@ const STORE = "fjord-sandbox";
 function load(): Setup {
   const fallback: Setup = { cls: "warrior", levels: { ...PRESETS[0].levels }, round: 0, speed: 0.5, seed: 1 };
   try {
-    return { ...fallback, ...JSON.parse(localStorage.getItem(STORE) ?? "{}") };
+    const saved: Setup = { ...fallback, ...JSON.parse(localStorage.getItem(STORE) ?? "{}") };
+    // Skills renamed or removed since the setup was saved are dropped.
+    saved.levels = Object.fromEntries(Object.entries(saved.levels).filter(([id]) => id in SKILLS));
+    return saved;
   } catch {
     return fallback;
   }
@@ -70,6 +76,7 @@ export function startSandbox(app: HTMLElement): void {
     stop?.();
     stop = null;
     const combos = COMBOS.map((c) => `${c.pair.map((id) => SKILLS[id].name).join(" → ")}: ${comboEffect(c)}`).join("<br>");
+    const reactions = REACTIONS.map((r) => `${r.icon} <b>${r.name}</b> (${r.mix.join(" + ")}): ${reactionEffect(r)}`).join("<br>");
     app.innerHTML = `
       <div class="sandbox">
         <h2>🧪 Sandbox <a class="muted" href="./">back to game</a></h2>
@@ -90,7 +97,9 @@ export function startSandbox(app: HTMLElement): void {
         <div class="battle-bar"><div class="cds" id="cds"></div><div id="sb-status" class="muted"></div></div>
         <div class="sb-bottom">
           <div class="panel"><h3>Log</h3><ol id="sb-log" class="sb-log"></ol></div>
-          <div class="panel"><h3>Combos</h3><p class="muted">The second skill must be the very next attack; a normal swing in between breaks it. Pairs chain.</p>${combos}</div>
+          ${setup.cls === "mage"
+            ? `<div class="panel"><h3>Element reactions</h3><p class="muted">Each spell marks the mob for 4s; another element reacts with the mark, in either order. Some leave a zone or cloud that the next element reacts with again.</p>${reactions}</div>`
+            : `<div class="panel"><h3>Combos</h3><p class="muted">The second skill must be the very next attack; a normal swing in between breaks it. Pairs chain.</p>${combos}</div>`}
         </div>
       </div>`;
     fight();

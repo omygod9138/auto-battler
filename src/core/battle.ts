@@ -1,5 +1,8 @@
 import { Rng } from "./rng";
-import { COMBOS, SKILL_NUM as N, type Combo, type SkillId, type SkillLevels } from "./skills";
+import {
+  COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, SKILL_NUM as N, SPELL_HOLD, findReaction,
+  type Combo, type Derived, type Element, type Reaction, type SkillId, type SkillLevels,
+} from "./skills";
 import type { Stats } from "./stats";
 
 export const TICK = 1 / 20;
@@ -19,15 +22,17 @@ export interface Fighter {
   shield: number;
   /** Knockback distance still to slide, signed along x. */
   push: number;
-  /** Seconds left of Wall Slam: takes extra damage. */
+  /** Seconds left of extra damage taken (Wall Slam, Obsidian, Glass). */
   vuln: number;
+  /** How much extra while vuln lasts. */
+  vulnMult: number;
 }
 
 /** Wall Slam: a kick into the far wall makes the mob take this much more damage for WALL_SLAM_TIME. */
 export const WALL_SLAM_MULT = 1.33;
 export const WALL_SLAM_TIME = 5;
 
-export type FxKind = "slash" | "arrow" | "bolt" | "fireball" | "frost" | "meteor" | "lightning" | "bash" | "claw" | "spit";
+export type FxKind = "slash" | "arrow" | "bolt" | "fireball" | "water" | "wind" | "stone" | "meteor" | "lightning" | "bash" | "claw" | "spit";
 
 /** What happened during a tick, for floating numbers and projectiles. */
 export type BattleEvent =
@@ -35,13 +40,14 @@ export type BattleEvent =
   | { t: number; type: "dot"; target: Side; amount: number; kind: "poison" | "burn" | "thorns" }
   | { t: number; type: "heal"; target: Side; amount: number }
   | { t: number; type: "dodge"; target: Side }
-  | { t: number; type: "status"; target: Side; label: string }
+  | { t: number; type: "status"; target: Side; label: string; reaction?: boolean }
   /** A skill starts winding up; its hit lands at battle time `at`. combo is the label it will complete. */
   | { t: number; type: "windup"; target: Side; skill: SkillId; at: number; combo?: string };
 
 export type Outcome = "win" | "loss";
 
-type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" | "charge" | "spartanKick" | "heavyStrike" | "static";
+type ActiveId = "shieldBash" | "headshot" | "fireball" | "gust" | "tidalWave" | "stoneSpike" | "charge" | "spartanKick" | "heavyStrike";
+const SPELLS = ["fireball", "gust", "tidalWave", "stoneSpike"] as const;
 
 /** Every attack skill winds up before it hits, so the art can gather momentum and a combo can pause
  * right before the hit. Seconds; skills not listed use WINDUP_DEFAULT. Charge's wind-up is its dash. */
@@ -90,6 +96,12 @@ export class Battle {
   private snareSprung = false;
   private shieldRefill = 0;
   private enraged = false;
+  /** The element waiting on the mob for another to react with it. */
+  mark: { el: Element; left: number } | null = null;
+  /** What the last reaction left: a ground zone at x, or a cloud or charge on the mob. */
+  derived: { kind: Derived; left: number; x: number } | null = null;
+  /** When each ready spell started waiting for a better one (smart-cast). */
+  private holdSince = new Map<SkillId, number>();
   readonly snareX: number | null;
 
   constructor(
@@ -101,12 +113,12 @@ export class Battle {
   ) {
     this.rng = new Rng(seed);
     this.lv = (id) => levels[id] ?? 0;
-    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: ARENA.heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0, vuln: 0 };
-    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0, vuln: 0 };
+    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: ARENA.heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1 };
+    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1 };
     if (this.lv("manaShield")) this.hero.shield = heroStats.maxHp * N.manaShield(this.lv("manaShield")).shield;
     this.snareX = this.lv("snare") ? ARENA.heroStart + heroStats.range + 1.5 : null;
     // Active skills start at half cooldown so the first cast comes early.
-    for (const id of ["shieldBash", "headshot", "fireball", "frostNova", "meteor", "spartanKick", "heavyStrike", "static"] as const) {
+    for (const id of ["shieldBash", "headshot", ...SPELLS, "spartanKick", "heavyStrike"] as const) {
       if (this.lv(id)) this.cds.set(id, this.cooldown(id) / 2);
     }
     // Charge opens the fight, with Shield Bash ready to follow it.
@@ -146,9 +158,9 @@ export class Battle {
   private cooldown(id: ActiveId): number {
     const lv = this.lv(id);
     const base = id === "shieldBash" ? N.shieldBash(lv).cd : id === "headshot" ? N.headshot(lv).cd
-      : id === "fireball" ? N.fireball(lv).cd : id === "frostNova" ? N.frostNova(lv).cd
-      : id === "charge" ? N.charge(lv).cd : id === "spartanKick" ? N.spartanKick(lv).cd
-      : id === "heavyStrike" ? N.heavyStrike(lv).cd : id === "static" ? N.static(lv).cd : N.meteor(lv).cd;
+      : id === "fireball" ? N.fireball(lv).cd : id === "gust" ? N.gust(lv).cd
+      : id === "tidalWave" ? N.tidalWave(lv).cd : id === "stoneSpike" ? N.stoneSpike(lv).cd
+      : id === "charge" ? N.charge(lv).cd : id === "spartanKick" ? N.spartanKick(lv).cd : N.heavyStrike(lv).cd;
     return base * this.hero.s.cdMult;
   }
 
@@ -158,6 +170,7 @@ export class Battle {
       // A root waits out a knockback slide, so "immobilized after the kick" starts once it lands.
       if (f.push === 0) f.root = Math.max(0, f.root - TICK);
       f.vuln = Math.max(0, f.vuln - TICK);
+      if (f.vuln === 0) f.vulnMult = 1;
       if (f.push !== 0) {
         const step = Math.sign(f.push) * Math.min(Math.abs(f.push), Math.max(PUSH_MIN_STEP, Math.abs(f.push) * PUSH_SHARE));
         const x = Math.max(0, Math.min(ARENA.length, f.x + step));
@@ -166,6 +179,7 @@ export class Battle {
       }
       if (f.s.regen > 0 && f.hp < f.s.maxHp) f.hp = Math.min(f.s.maxHp, f.hp + f.s.maxHp * f.s.regen * TICK);
     }
+    this.tickElements();
     for (const [list, kind] of [[this.poison, "poison"], [this.burn, "burn"]] as const) {
       let total = 0;
       for (const d of list) {
@@ -213,7 +227,8 @@ export class Battle {
     if (dist > me.s.range + 1e-6) {
       if (me.root > 0) return;
       const dir = me.side === "hero" ? 1 : -1;
-      const step = Math.min(me.s.speed * TICK, dist - me.s.range);
+      const slow = me.side === "mob" ? this.zone()?.slow ?? 0 : 0;
+      const step = Math.min(me.s.speed * (1 - slow) * TICK, dist - me.s.range);
       me.x += dir * step;
       if (me.side === "mob" && this.snareX !== null && !this.snareSprung && me.x <= this.snareX) {
         this.snareSprung = true;
@@ -242,9 +257,9 @@ export class Battle {
           this.enraged = true;
           this.emit({ t: this.time, type: "status", target: "mob", label: "Enraged!" });
         }
-        return f.s.interval / 1.5;
+        return f.s.interval / 1.5 / (1 - (this.zone()?.atkSlow ?? 0));
       }
-      return f.s.interval;
+      return f.s.interval / (1 - (this.zone()?.atkSlow ?? 0));
     }
     const berserk = this.lv("berserk") ? N.berserk(this.lv("berserk")) * (1 - f.hp / f.s.maxHp) : 0;
     return f.s.interval / (1 + berserk);
@@ -256,7 +271,16 @@ export class Battle {
     const ready = (id: SkillId) => this.lv(id) > 0 && this.cds.get(id) === 0;
     // Same tolerance as movement: fighters stop at range plus float error.
     const inRange = dist <= h.s.range + 1e-6;
-    for (const id of ["frostNova", "meteor", "fireball", "headshot"] as const) {
+    if (inRange) {
+      const spell = this.pickSpell();
+      if (spell) {
+        this.cds.set(spell, this.cooldown(spell));
+        this.holdSince.clear();
+        this.windUp(spell);
+        return true;
+      }
+    }
+    for (const id of ["headshot"] as const) {
       if (ready(id) && inRange) {
         this.cds.set(id, this.cooldown(id));
         this.windUp(id);
@@ -338,17 +362,28 @@ export class Battle {
     this.pending = null;
     const h = this.hero;
     if (skill === "heavyStrike") return this.heroAttack(true);
-    if (skill === "frostNova") {
-      const n = N.frostNova(this.lv("frostNova"));
-      this.mob.stun = Math.max(this.mob.stun, n.freeze);
-      this.spell(h.s.dmg * n.mult, "frost", "Frost Nova", "frostNova");
-    }
-    if (skill === "meteor") this.spell(h.s.dmg * N.meteor(this.lv("meteor")).mult, "meteor", "Meteor!", "meteor");
     if (skill === "fireball") {
       const n = N.fireball(this.lv("fireball"));
       this.spell(h.s.dmg * n.mult, "fireball", "Fireball", "fireball");
       this.addBurn(n.burn, 3);
     }
+    if (skill === "gust") {
+      const n = N.gust(this.lv("gust"));
+      this.spell(h.s.dmg * n.mult, "wind", "Gust", "gust");
+      this.knock(n.push);
+    }
+    if (skill === "tidalWave") {
+      const n = N.tidalWave(this.lv("tidalWave"));
+      this.spell(h.s.dmg * n.mult, "water", "Tidal Wave", "tidalWave");
+      this.knock(n.push);
+    }
+    if (skill === "stoneSpike") {
+      const n = N.stoneSpike(this.lv("stoneSpike"));
+      this.spell(h.s.dmg * n.mult, "stone", "Stone Spike", "stoneSpike");
+      this.mob.root = Math.max(this.mob.root, n.root);
+    }
+    const el = ELEMENT_OF[skill];
+    if (el && !this.outcome) this.applyElement(el);
     if (skill === "headshot") this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!", "headshot");
     if (skill === "shieldBash") {
       const n = N.shieldBash(this.lv("shieldBash"));
@@ -367,7 +402,7 @@ export class Battle {
         this.mob.root = Math.max(this.mob.root, n.root);
         h.push -= n.push - slide;
         if (slide < n.push - 1e-9) {
-          this.mob.vuln = WALL_SLAM_TIME;
+          this.makeVulnerable(WALL_SLAM_MULT, WALL_SLAM_TIME);
           this.emit({ t: this.time, type: "status", target: "mob", label: "Wall Slam!" });
         }
       }
@@ -431,10 +466,6 @@ export class Battle {
     if (this.lv("knockback") && this.rng.next() < N.knockback(this.lv("knockback")).chance) {
       this.mob.x = Math.min(ARENA.length, this.mob.x + N.knockback(1).dist);
     }
-    if (this.lv("static") && this.cds.get("static") === 0) {
-      this.cds.set("static", this.cooldown("static"));
-      this.spell(h.s.dmg * N.static(this.lv("static")).mult, "lightning", "Zap!");
-    }
     if (this.lv("ignite") && h.s.magic) this.addBurn(h.s.dmg * 0.3, 2);
   }
 
@@ -472,7 +503,93 @@ export class Battle {
   }
 
   private slam(): number {
-    return this.mob.vuln > 0 ? WALL_SLAM_MULT : 1;
+    return this.mob.vuln > 0 ? this.mob.vulnMult : 1;
+  }
+
+  private makeVulnerable(mult: number, dur: number): void {
+    this.mob.vulnMult = this.mob.vuln > 0 ? Math.max(this.mob.vulnMult, mult) : mult;
+    this.mob.vuln = Math.max(this.mob.vuln, dur);
+  }
+
+  /** Push the mob away; the far wall stops it. */
+  private knock(dist: number): void {
+    this.mob.push += Math.max(0, Math.min(dist, ARENA.length - this.mob.x - this.mob.push));
+  }
+
+  /** The ground zone the mob is standing in, if any. */
+  zone(): (typeof DERIVED)[Derived] | null {
+    const d = this.derived;
+    if (!d) return null;
+    const def = DERIVED[d.kind];
+    return def.zone && Math.abs(this.mob.x - d.x) <= def.zone ? def : null;
+  }
+
+  /** The derived state an element would react with now: a zone only while the mob stands in it. */
+  private derivedFor(): Derived | null {
+    const d = this.derived;
+    if (!d) return null;
+    return !DERIVED[d.kind].zone || this.zone() ? d.kind : null;
+  }
+
+  /** The reaction an element would trigger if it landed now. Derived states react before marks. */
+  reactionFor(el: Element): Reaction | undefined {
+    const d = this.derivedFor();
+    const tier2 = d ? findReaction(d, el) : undefined;
+    if (tier2) return tier2;
+    return this.mark && this.mark.el !== el ? findReaction(this.mark.el, el) : undefined;
+  }
+
+  /** Smart-cast: prefer a ready spell that reacts; a spell that wouldn't react waits up to SPELL_HOLD for one that would. */
+  private pickSpell(): (typeof SPELLS)[number] | null {
+    const learned = SPELLS.filter((id) => this.lv(id) > 0);
+    const ready = learned.filter((id) => this.cds.get(id) === 0);
+    if (!ready.length) return null;
+    const reacts = (id: SkillId) => this.reactionFor(ELEMENT_OF[id]!) !== undefined;
+    const hit = ready.find(reacts);
+    if (hit) return hit;
+    for (const id of ready) if (!this.holdSince.has(id)) this.holdSince.set(id, this.time);
+    const waited = this.time - Math.min(...ready.map((id) => this.holdSince.get(id)!));
+    const soon = learned.some((id) => this.cds.get(id)! > 0 && this.cds.get(id)! <= SPELL_HOLD - waited && reacts(id));
+    return soon ? null : ready[0];
+  }
+
+  /** Mark the mob with an element, or react with what's already there. */
+  private applyElement(el: Element): void {
+    const linger = N.lingering(this.lv("lingering"));
+    const r = this.reactionFor(el);
+    if (!r) {
+      this.mark = { el, left: MARK_TIME + linger };
+      return;
+    }
+    // A reaction uses up whatever it reacted with.
+    if (this.derived && r.mix[0] === this.derived.kind) this.derived = null;
+    else this.mark = null;
+    const amp = N.attunement(this.lv("attunement"));
+    this.emit({ t: this.time, type: "status", target: "mob", label: `${r.icon} ${r.name}!`, reaction: true });
+    if (r.burst) this.spell(this.hero.s.dmg * r.burst * amp, r.stun ? "lightning" : r.name === "Eruption" ? "meteor" : "bolt", r.name);
+    if (r.stun) this.mob.stun = Math.max(this.mob.stun, r.stun * amp);
+    if (r.root) this.mob.root = Math.max(this.mob.root, r.root * amp);
+    if (r.push) this.knock(r.push);
+    if (r.vuln) this.makeVulnerable(r.vuln.mult, r.vuln.dur);
+    if (r.burnMult) {
+      const ig = this.lv("ignite") ? N.ignite(this.lv("ignite")).durMult : 1;
+      for (const b of this.burn) {
+        b.dps *= r.burnMult;
+        b.left = Math.max(b.left, 3 * ig);
+      }
+    }
+    if (r.leaves) this.derived = { kind: r.leaves, left: DERIVED[r.leaves].dur + linger, x: this.mob.x + this.mob.push };
+  }
+
+  private tickElements(): void {
+    if (this.mark && (this.mark.left -= TICK) <= 0) this.mark = null;
+    if (this.derived && (this.derived.left -= TICK) <= 0) this.derived = null;
+    const burn = this.zone()?.burn;
+    if (burn) {
+      const amount = this.hero.s.dmg * burn * N.attunement(this.lv("attunement")) * this.hero.s.spellPower * this.slam() * TICK;
+      this.mob.hp -= amount;
+      if (Math.round(this.time * 20) % 10 === 0) this.emit({ t: this.time, type: "dot", target: "mob", amount: amount * 10, kind: "burn" });
+    }
   }
 
   private dealToMob(dmg: number, crit: boolean, fx: FxKind, label?: string, skill?: SkillId): void {
@@ -494,6 +611,11 @@ export class Battle {
   private mobAttack(): void {
     const h = this.hero;
     const m = this.mob;
+    const blind = this.derived ? DERIVED[this.derived.kind].blind ?? 0 : 0;
+    if (blind && this.rng.next() < blind) {
+      this.emit({ t: this.time, type: "dodge", target: "hero" });
+      return;
+    }
     if (!m.s.magic && this.rng.next() < h.s.dodge) {
       this.emit({ t: this.time, type: "dodge", target: "hero" });
       return;

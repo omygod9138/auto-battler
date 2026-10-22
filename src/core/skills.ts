@@ -6,7 +6,7 @@ export type SkillId =
   // Ranger
   | "multishot" | "poison" | "eagleEye" | "knockback" | "rapidFire" | "evasion" | "headshot" | "snare"
   // Mage
-  | "fireball" | "frostNova" | "static" | "manaShield" | "arcane" | "ignite" | "timeWarp" | "meteor"
+  | "fireball" | "gust" | "tidalWave" | "stoneSpike" | "manaShield" | "arcane" | "ignite" | "timeWarp" | "attunement" | "lingering"
   // Shared
   | "vitality" | "might" | "swiftness" | "regeneration" | "lucky" | "vampirism" | "fortify" | "executioner";
 
@@ -46,6 +46,99 @@ export const COMBOS: Combo[] = [
   { pair: ["shieldBash", "heavyStrike"], dmgMult: 1.33, label: "Combo! +33%" },
 ];
 
+/** Mage elements. Each element spell marks the mob; a different element reacts with the mark. */
+export type Element = "fire" | "water" | "earth" | "air";
+/** What a reaction leaves behind. Zones sit on the ground where the mob stood; the rest ride on the mob. */
+export type Derived = "lava" | "steam" | "mud" | "storm" | "sandstorm";
+
+export const ELEMENT_OF: Partial<Record<SkillId, Element>> = { fireball: "fire", tidalWave: "water", stoneSpike: "earth", gust: "air" };
+export const ELEMENT_ICON: Record<Element, string> = { fire: "🔥", water: "💧", earth: "🪨", air: "🌬️" };
+
+/** Seconds an element mark waits on the mob for another element. */
+export const MARK_TIME = 4;
+/** Smart-cast: a spell that wouldn't react waits up to this long for one that would. */
+export const SPELL_HOLD = 1;
+
+export interface DerivedDef {
+  name: string;
+  icon: string;
+  dur: number;
+  /** Ground zone half-width; the effects below apply only while the mob stands in it. */
+  zone?: number;
+  slow?: number;
+  /** Mob attacks this much slower. */
+  atkSlow?: number;
+  /** Burn per second, × hero damage. */
+  burn?: number;
+  /** Mob attacks miss this often. */
+  blind?: number;
+}
+
+export const DERIVED: Record<Derived, DerivedDef> = {
+  lava: { name: "Lava", icon: "🌋", dur: 4, zone: 1.5, slow: 0.4, burn: 0.6 },
+  steam: { name: "Steam", icon: "♨️", dur: 3, blind: 0.3 },
+  mud: { name: "Mud", icon: "🟫", dur: 5, zone: 1.5, slow: 0.6, atkSlow: 0.25 },
+  storm: { name: "Storm", icon: "⛈️", dur: 4 },
+  sandstorm: { name: "Sandstorm", icon: "🌪️", dur: 3, blind: 0.4 },
+};
+
+export interface Reaction {
+  /** Two base elements (either order), or a derived state plus the element that hits it. */
+  mix: [Element | Derived, Element];
+  name: string;
+  icon: string;
+  /** Extra spell hit, × hero damage. */
+  burst?: number;
+  stun?: number;
+  root?: number;
+  /** Mob knocked back, arena units. */
+  push?: number;
+  /** Burns hurt this much more and refresh. */
+  burnMult?: number;
+  /** Mob takes more damage for a while. */
+  vuln?: { mult: number; dur: number };
+  leaves?: Derived;
+}
+
+/** Pairs of base elements, then tier 2: a derived state hit by another element. */
+export const REACTIONS: Reaction[] = [
+  { mix: ["fire", "earth"], name: "Lava", icon: "🌋", leaves: "lava" },
+  { mix: ["fire", "water"], name: "Steam", icon: "♨️", burst: 1.5, leaves: "steam" },
+  { mix: ["fire", "air"], name: "Wildfire", icon: "🔥", burnMult: 2 },
+  { mix: ["water", "earth"], name: "Mud", icon: "🟫", leaves: "mud" },
+  { mix: ["water", "air"], name: "Storm", icon: "⛈️", burst: 2, stun: 0.5, leaves: "storm" },
+  { mix: ["earth", "air"], name: "Sandstorm", icon: "🌪️", push: 2, leaves: "sandstorm" },
+  { mix: ["lava", "water"], name: "Obsidian", icon: "🪨", stun: 2, vuln: { mult: 1.3, dur: 5 } },
+  { mix: ["lava", "air"], name: "Eruption", icon: "🌋", burst: 3 },
+  { mix: ["mud", "fire"], name: "Clay", icon: "🧱", root: 3 },
+  { mix: ["sandstorm", "fire"], name: "Glass", icon: "🔮", burst: 1, vuln: { mult: 1.2, dur: 4 } },
+  { mix: ["storm", "fire"], name: "Plasma", icon: "⚡", burst: 2.5 },
+  { mix: ["storm", "water"], name: "Electrocute", icon: "⚡", stun: 1.5 },
+];
+
+/** The reaction an element triggers against a mark or derived state, if any. */
+export function findReaction(on: Element | Derived, el: Element): Reaction | undefined {
+  return REACTIONS.find(({ mix: [a, b] }) => (a === on && b === el) || (b === on && a === el));
+}
+
+/** What a reaction does, for descriptions. */
+export function reactionEffect(r: Reaction): string {
+  const d = r.leaves && DERIVED[r.leaves];
+  return [
+    r.burst ? `×${r.burst} burst` : "",
+    r.stun ? `stun ${r.stun}s` : "",
+    r.root ? `root ${r.root}s` : "",
+    r.push ? `push ${r.push}m` : "",
+    r.burnMult ? `burns ×${r.burnMult}` : "",
+    r.vuln ? `+${Math.round((r.vuln.mult - 1) * 100)}% damage taken ${r.vuln.dur}s` : "",
+    d && d.zone ? `ground ${d.dur}s` : "",
+    d?.slow ? `slow ${Math.round(d.slow * 100)}%` : "",
+    d?.burn ? "burns" : "",
+    d?.atkSlow ? `attacks −${Math.round(d.atkSlow * 100)}%` : "",
+    d?.blind ? `misses ${Math.round(d.blind * 100)}% for ${d.dur}s` : "",
+  ].filter(Boolean).join(", ");
+}
+
 /** What a combo does, for skill descriptions. */
 export function comboEffect(c: Combo): string {
   return [
@@ -78,11 +171,15 @@ export const SKILL_NUM = {
   headshot: (lv: number) => ({ cd: 8 - lv, mult: 3 + lv }),
   snare: (lv: number) => 1 + 0.75 * lv,
   fireball: (lv: number) => ({ cd: 4, mult: 2 + lv, burn: 2 + 2 * lv }),
-  frostNova: (lv: number) => ({ cd: 9 - lv, freeze: 1.2 + 0.5 * lv, mult: 1 }),
-  static: (lv: number) => ({ cd: [4, 3, 2.5][lv - 1] ?? 2.5, mult: 1.5 }),
+  gust: (lv: number) => ({ cd: [4, 3.5, 3][lv - 1] ?? 3, mult: 1 + 0.5 * lv, push: 1 }),
+  tidalWave: (lv: number) => ({ cd: 8 - lv, mult: 1, push: 1 + 0.5 * lv }),
+  stoneSpike: (lv: number) => ({ cd: 8 - lv, mult: 1 + 0.5 * lv, root: 0.5 + 0.5 * lv }),
   manaShield: (lv: number) => ({ shield: 0.15 + 0.1 * lv, refill: 8 }),
   ignite: (lv: number) => ({ durMult: 1 + 0.5 * lv, dmgMult: 1 + 0.25 * lv }),
-  meteor: (lv: number) => ({ cd: 14 - 2 * lv, mult: 5 + 2 * lv }),
+  /** Reaction damage and crowd control. */
+  attunement: (lv: number) => 1 + 0.2 * lv,
+  /** Seconds added to marks and what reactions leave. */
+  lingering: (lv: number) => 1 * lv,
   executioner: (lv: number) => ({ below: 0.3, mult: 1.25 + 0.25 * lv }),
 };
 
@@ -127,10 +224,12 @@ export const SKILLS: Record<SkillId, SkillDef> = {
 
   fireball: { id: "fireball", name: "Fireball", icon: "🔥", cls: "mage", kind: "active", cat: "attack",
     desc: (lv) => `Every ${S.fireball(lv).cd}s: ×${S.fireball(lv).mult} damage and burn ${S.fireball(lv).burn}/s for 3s.` },
-  frostNova: { id: "frostNova", name: "Frost Nova", icon: "❄️", cls: "mage", kind: "active", cat: "defense",
-    desc: (lv) => `Every ${S.frostNova(lv).cd}s: freeze the mob for ${S.frostNova(lv).freeze}s.` },
-  static: { id: "static", name: "Static Charge", icon: "🌩️", cls: "mage", kind: "active", cat: "attack",
-    desc: (lv) => `Every ${num(S.static(lv).cd)}s: your next hit adds a ×${S.static(lv).mult} lightning bolt.` },
+  gust: { id: "gust", name: "Gust", icon: "🌬️", cls: "mage", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${num(S.gust(lv).cd)}s: wind blade for ×${num(S.gust(lv).mult)} damage, pushes the mob ${S.gust(lv).push}m.` },
+  tidalWave: { id: "tidalWave", name: "Tidal Wave", icon: "🌊", cls: "mage", kind: "active", cat: "defense",
+    desc: (lv) => `Every ${S.tidalWave(lv).cd}s: wave for ×${S.tidalWave(lv).mult} damage, pushes the mob ${num(S.tidalWave(lv).push)}m.` },
+  stoneSpike: { id: "stoneSpike", name: "Stone Spike", icon: "🪨", cls: "mage", kind: "active", cat: "defense",
+    desc: (lv) => `Every ${S.stoneSpike(lv).cd}s: spike for ×${num(S.stoneSpike(lv).mult)} damage, roots the mob ${S.stoneSpike(lv).root}s.` },
   manaShield: { id: "manaShield", name: "Mana Shield", icon: "🔵", cls: "mage", kind: "proc", cat: "defense",
     desc: (lv) => `Barrier of ${pct(S.manaShield(lv).shield)} max HP, refills every ${S.manaShield(lv).refill}s.` },
   arcane: { id: "arcane", name: "Arcane Power", icon: "✨", cls: "mage", kind: "passive", cat: "passive",
@@ -139,8 +238,10 @@ export const SKILLS: Record<SkillId, SkillDef> = {
     desc: (lv) => `Burns last ×${S.ignite(lv).durMult} longer and hurt ×${S.ignite(lv).dmgMult}. Bolts burn too.` },
   timeWarp: { id: "timeWarp", name: "Time Warp", icon: "⏳", cls: "mage", kind: "passive", cat: "passive",
     desc: (lv) => `Spell cooldowns −${pct(0.15 * lv)}.`, apply: (s, lv) => { s.cdMult *= 1 - 0.15 * lv; } },
-  meteor: { id: "meteor", name: "Meteor", icon: "☄️", cls: "mage", kind: "active", cat: "attack",
-    desc: (lv) => `Every ${S.meteor(lv).cd}s: ×${S.meteor(lv).mult} damage.` },
+  attunement: { id: "attunement", name: "Attunement", icon: "🔯", cls: "mage", kind: "passive", cat: "passive",
+    desc: (lv) => `Element reactions hit ${pct(S.attunement(lv) - 1)} harder and their stuns and roots last ${pct(S.attunement(lv) - 1)} longer.` },
+  lingering: { id: "lingering", name: "Lingering", icon: "⌛", cls: "mage", kind: "passive", cat: "passive",
+    desc: (lv) => `Element marks, zones and clouds last +${S.lingering(lv)}s.` },
 
   vitality: { id: "vitality", name: "Vitality", icon: "❤️", cls: "any", kind: "passive",
     desc: (lv) => `+${pct(0.25 * lv)} max HP.`, apply: (s, lv) => { s.maxHp = Math.round(s.maxHp * (1 + 0.25 * lv)); } },
@@ -169,6 +270,19 @@ for (const def of Object.values(SKILLS)) {
   if (!notes.length) continue;
   const base = def.desc;
   def.desc = (lv) => `${base(lv)} Combo — ${notes.join("; ")}.`;
+}
+
+// Element spells list their reactions from REACTIONS the same way.
+for (const def of Object.values(SKILLS)) {
+  const el = ELEMENT_OF[def.id];
+  if (!el) continue;
+  const pairs = REACTIONS.filter((r) => r.mix[1] === el || r.mix[0] === el).map((r) => {
+    const other = r.mix[0] === el ? r.mix[1] : r.mix[0];
+    const on = other in DERIVED ? DERIVED[other as Derived].icon : ELEMENT_ICON[other as Element];
+    return `+${on} ${r.name}: ${reactionEffect(r)}`;
+  });
+  const base = def.desc;
+  def.desc = (lv) => `${base(lv)} ${ELEMENT_ICON[el]} Marks the mob ${MARK_TIME}s. ${pairs.join("; ")}.`;
 }
 
 export type SkillLevels = Partial<Record<SkillId, number>>;

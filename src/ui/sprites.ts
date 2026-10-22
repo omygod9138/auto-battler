@@ -127,6 +127,9 @@ async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | n
       if (role && !anims[role]) anims[role] = await loadClip(urls);
     }
   }
+  // No attack clip: the first skill clip (e.g. the mage's Fireball cast) stands in, so plain attacks
+  // and skills without art of their own still animate.
+  anims.attack ??= Object.values(skills)[0];
   const stillUrl = states.map((st) => url(st.frames?.rotations?.east ?? "")).find((u) => !!u);
   const still = stillUrl ? await loadClip([stillUrl]) : anims.idle;
   if (!still) return null;
