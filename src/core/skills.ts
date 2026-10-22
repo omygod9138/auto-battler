@@ -27,6 +27,9 @@ export interface SkillDef {
 export const MAX_LEVEL = 3;
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+/** Trims float noise such as 1.2000000000000002. */
+const num = (v: number) => String(+v.toFixed(2));
+const nth = (n: number) => `${n}${n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th"}`;
 
 /** Numbers shared by the descriptions and the battle sim so they can't drift apart. */
 export const SKILL_NUM = {
@@ -55,13 +58,13 @@ const S = SKILL_NUM;
 
 export const SKILLS: Record<SkillId, SkillDef> = {
   heavyStrike: { id: "heavyStrike", name: "Heavy Strike", icon: "🔨", cls: "warrior", kind: "proc",
-    desc: (lv) => `Every ${S.heavyStrike(lv).every}th hit deals ×${S.heavyStrike(lv).mult}.` },
+    desc: (lv) => `Every ${nth(S.heavyStrike(lv).every)} hit deals ×${num(S.heavyStrike(lv).mult)}.` },
   bloodlust: { id: "bloodlust", name: "Bloodlust", icon: "🩸", cls: "warrior", kind: "proc",
     desc: (lv) => `Heal ${pct(S.bloodlust(lv))} of damage you deal.` },
   ironSkin: { id: "ironSkin", name: "Iron Skin", icon: "🛡️", cls: "warrior", kind: "passive",
     desc: (lv) => `Take ${pct(0.1 * lv + 0.05)} less damage.`, apply: (s, lv) => { s.dmgTaken *= 1 - (0.1 * lv + 0.05); } },
   shieldBash: { id: "shieldBash", name: "Shield Bash", icon: "💥", cls: "warrior", kind: "active",
-    desc: (lv) => `Every ${S.shieldBash(lv).cd}s: hit ×${S.shieldBash(lv).mult} and stun ${S.shieldBash(lv).stun}s.` },
+    desc: (lv) => `Every ${S.shieldBash(lv).cd}s: hit ×${num(S.shieldBash(lv).mult)} and stun ${num(S.shieldBash(lv).stun)}s.` },
   berserk: { id: "berserk", name: "Berserk", icon: "😤", cls: "warrior", kind: "passive",
     desc: (lv) => `Up to +${pct(S.berserk(lv))} attack speed as your HP drops.` },
   thorns: { id: "thorns", name: "Thorns", icon: "🌵", cls: "warrior", kind: "proc",

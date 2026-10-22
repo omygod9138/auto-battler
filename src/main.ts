@@ -131,7 +131,7 @@ function renderChoose(s: RunState): void {
       return `<button class="card skill ${k.cls === "any" ? "shared" : ""}" data-action="pick" data-id="${id}">
         <div class="big">${k.icon}</div>
         <b>${k.name}</b>
-        <small class="tag ${k.kind}">${KIND_LABEL[k.kind]}${k.cls === "any" ? " · Shared" : ""}</small>
+        <small class="tag ${k.kind}">${KIND_LABEL[k.kind]} · ${k.cls === "any" ? "Shared" : `<span class="cls">${CLASSES[k.cls].name}</span>`}</small>
         <span class="lv">${lv ? `Lv ${lv} → ${lv + 1}` : "New"}${lv + 1 === MAX_LEVEL ? " (max)" : ""}</span>
         <span>${k.desc(lv + 1)}</span>
       </button>`;
