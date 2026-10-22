@@ -17,6 +17,8 @@ export interface Fighter {
   stun: number;
   root: number;
   shield: number;
+  /** Knockback distance still to slide, signed along x. */
+  push: number;
 }
 
 export type FxKind = "slash" | "arrow" | "bolt" | "fireball" | "frost" | "meteor" | "lightning" | "bash" | "claw" | "spit";
@@ -31,7 +33,11 @@ export type BattleEvent =
 
 export type Outcome = "win" | "loss";
 
-type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor";
+type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" | "charge" | "spartanKick";
+
+/** Charge dash and knockback slide speeds, in arena units per second. */
+const DASH_SPEED = 16;
+const PUSH_SPEED = 12;
 
 interface Dot {
   dps: number;
@@ -48,6 +54,10 @@ export class Battle {
   private rng: Rng;
   private lv: (id: SkillId) => number;
   private hits = 0;
+  /** Charge has landed at least once, so held skills may follow it. */
+  private charged = false;
+  /** The hero is mid Charge dash. */
+  dashing = false;
   /** Recent attack skills, for combos. */
   private chain: SkillId[] = [];
   private chainAt = -99;
@@ -69,14 +79,16 @@ export class Battle {
   ) {
     this.rng = new Rng(seed);
     this.lv = (id) => levels[id] ?? 0;
-    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: ARENA.heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0 };
-    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0 };
+    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: ARENA.heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0 };
+    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0 };
     if (this.lv("manaShield")) this.hero.shield = heroStats.maxHp * N.manaShield(this.lv("manaShield")).shield;
     this.snareX = this.lv("snare") ? ARENA.heroStart + heroStats.range + 1.5 : null;
     // Active skills start at half cooldown so the first cast comes early.
-    for (const id of ["shieldBash", "headshot", "fireball", "frostNova", "meteor"] as const) {
+    for (const id of ["shieldBash", "headshot", "fireball", "frostNova", "meteor", "spartanKick"] as const) {
       if (this.lv(id)) this.cds.set(id, this.cooldown(id) / 2);
     }
+    // Charge opens the fight.
+    if (this.lv("charge")) this.cds.set("charge", 0);
   }
 
   /** Active skills with seconds left and full cooldown, for the HUD. */
@@ -109,7 +121,8 @@ export class Battle {
   private cooldown(id: ActiveId): number {
     const lv = this.lv(id);
     const base = id === "shieldBash" ? N.shieldBash(lv).cd : id === "headshot" ? N.headshot(lv).cd
-      : id === "fireball" ? N.fireball(lv).cd : id === "frostNova" ? N.frostNova(lv).cd : N.meteor(lv).cd;
+      : id === "fireball" ? N.fireball(lv).cd : id === "frostNova" ? N.frostNova(lv).cd
+      : id === "charge" ? N.charge(lv).cd : id === "spartanKick" ? N.spartanKick(lv).cd : N.meteor(lv).cd;
     return base * this.hero.s.cdMult;
   }
 
@@ -117,6 +130,12 @@ export class Battle {
     for (const f of [this.hero, this.mob]) {
       f.stun = Math.max(0, f.stun - TICK);
       f.root = Math.max(0, f.root - TICK);
+      if (f.push !== 0) {
+        const step = Math.sign(f.push) * Math.min(Math.abs(f.push), PUSH_SPEED * TICK);
+        const x = Math.max(0, Math.min(ARENA.length, f.x + step));
+        f.push = x === f.x + step ? f.push - step : 0;
+        f.x = x;
+      }
       if (f.s.regen > 0 && f.hp < f.s.maxHp) f.hp = Math.min(f.s.maxHp, f.hp + f.s.maxHp * f.s.regen * TICK);
     }
     for (const [list, kind] of [[this.poison, "poison"], [this.burn, "burn"]] as const) {
@@ -147,7 +166,8 @@ export class Battle {
   }
 
   private act(me: Fighter, foe: Fighter): void {
-    if (me.stun > 0) return;
+    if (me.stun > 0 || me.push !== 0) return;
+    if (me.side === "hero" && this.dashing) return this.dash();
     const dist = Math.abs(foe.x - me.x);
     if (me.side === "hero") this.castActives(dist);
     if (this.outcome) return;
@@ -212,14 +232,41 @@ export class Battle {
       this.cds.set("headshot", this.cooldown("headshot"));
       this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!", "headshot");
     }
+    if (ready("charge") && !inRange && dist <= N.charge(this.lv("charge")).range && this.mob.push === 0) {
+      this.cds.set("charge", this.cooldown("charge"));
+      this.dashing = true;
+      return;
+    }
     // Hold the bash until Charge has opened the fight, so the two can combo.
-    const awaitCharge = this.lv("charge") > 0 && this.hits === 0;
+    const awaitCharge = this.lv("charge") > 0 && !this.charged;
     if (ready("shieldBash") && inRange && !awaitCharge) {
       const n = N.shieldBash(this.lv("shieldBash"));
       this.cds.set("shieldBash", this.cooldown("shieldBash"));
       const c = this.combo("shieldBash");
       this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Bash!", "shieldBash");
       this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
+    }
+    // Kick only when Charge can follow it, so the knockback sets up the combo.
+    if (ready("spartanKick") && dist <= h.s.range + 1e-6 && !awaitCharge && (!this.lv("charge") || ready("charge"))) {
+      const n = N.spartanKick(this.lv("spartanKick"));
+      this.cds.set("spartanKick", this.cooldown("spartanKick"));
+      this.combo("spartanKick");
+      if (this.physical(h.s.dmg * n.mult, "bash", "Kick!", "spartanKick")) this.mob.push += n.push;
+    }
+  }
+
+  /** Close the gap at dash speed, then hit with Charge on arrival. */
+  private dash(): void {
+    const h = this.hero;
+    const gap = this.mob.x - h.x - h.s.range;
+    h.x += Math.max(0, Math.min(DASH_SPEED * TICK, gap));
+    if (gap > DASH_SPEED * TICK) return;
+    this.dashing = false;
+    this.charged = true;
+    const n = N.charge(this.lv("charge"));
+    const c = this.combo("charge");
+    if (this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Charge!", "charge")) {
+      this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1) + (c?.stunAdd ?? 0));
     }
   }
 
@@ -243,13 +290,6 @@ export class Battle {
     let mult = 1;
     let label: string | undefined;
     let skill: SkillId | undefined;
-    if (this.hits === 1 && this.lv("charge")) {
-      const c = N.charge(this.lv("charge"));
-      mult *= c.mult;
-      this.mob.stun = Math.max(this.mob.stun, c.stun);
-      label = "Charge!";
-      skill = "charge";
-    }
     if (this.lv("heavyStrike")) {
       const hs = N.heavyStrike(this.lv("heavyStrike"));
       if (this.hits % hs.every === 0) {

@@ -2,7 +2,7 @@ import type { ClassId, Stats } from "./stats";
 
 export type SkillId =
   // Warrior
-  | "heavyStrike" | "bloodlust" | "ironSkin" | "shieldBash" | "berserk" | "thorns" | "secondWind" | "charge"
+  | "heavyStrike" | "bloodlust" | "ironSkin" | "shieldBash" | "berserk" | "thorns" | "secondWind" | "charge" | "spartanKick"
   // Ranger
   | "multishot" | "poison" | "eagleEye" | "knockback" | "rapidFire" | "evasion" | "headshot" | "snare"
   // Mage
@@ -34,6 +34,8 @@ export interface Combo {
   seq: SkillId[];
   dmgMult?: number;
   stunMult?: number;
+  /** Seconds added to the last hit's stun. */
+  stunAdd?: number;
   label: string;
 }
 
@@ -43,6 +45,7 @@ export const COMBO_WINDOW = 4;
 export const COMBOS: Combo[] = [
   { seq: ["charge", "shieldBash", "heavyStrike"], dmgMult: 1.33, label: "Combo! +33%" },
   { seq: ["charge", "shieldBash"], stunMult: 2, label: "Combo! Stun ×2" },
+  { seq: ["spartanKick", "charge"], stunAdd: 3, label: "Combo! Stun +3s" },
 ];
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
@@ -58,7 +61,8 @@ export const SKILL_NUM = {
   berserk: (lv: number) => 0.4 * lv,
   thorns: (lv: number) => 0.15 + 0.15 * lv,
   secondWind: (lv: number) => 0.25 + 0.15 * lv,
-  charge: (lv: number) => ({ mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
+  charge: (lv: number) => ({ cd: 10 - lv, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
+  spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 2 }),
   multishot: (lv: number) => ({ arrows: lv, mult: 0.5 }),
   poison: (lv: number) => ({ dps: 1 + 1.5 * lv, dur: 4, maxStacks: 3 + 2 * lv }),
   knockback: (lv: number) => ({ chance: 0.25 + 0.1 * lv, dist: 1.5 }),
@@ -91,8 +95,9 @@ export const SKILLS: Record<SkillId, SkillDef> = {
   secondWind: { id: "secondWind", name: "Second Wind", icon: "🌬️", cls: "warrior", kind: "proc", cat: "defense",
     desc: (lv) => `Once per fight, at 30% HP heal ${pct(S.secondWind(lv))}.` },
   charge: { id: "charge", name: "Charge", icon: "🐂", cls: "warrior", kind: "proc", cat: "attack",
-    desc: (lv) => `First hit deals ×${S.charge(lv).mult} and stuns ${S.charge(lv).stun}s. Move faster.`,
-    apply: (s) => { s.speed += 2; } },
+    desc: (lv) => `Every ${S.charge(lv).cd}s: from up to ${S.charge(lv).range}m away, dash in for ×${S.charge(lv).mult} and stun ${S.charge(lv).stun}s.` },
+  spartanKick: { id: "spartanKick", name: "Spartan Kick", icon: "🦶", cls: "warrior", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${S.spartanKick(lv).cd}s: kick for ×${num(S.spartanKick(lv).mult)} and knock the mob back ${S.spartanKick(lv).push}m. Combo: Charge next, stun +3s.` },
 
   multishot: { id: "multishot", name: "Multishot", icon: "🎯", cls: "ranger", kind: "proc", cat: "attack",
     desc: (lv) => `Fire ${S.multishot(lv).arrows} extra arrow(s) at ${pct(S.multishot(lv).mult)} damage.` },

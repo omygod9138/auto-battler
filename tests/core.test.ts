@@ -137,6 +137,38 @@ describe("battle", () => {
     expect(combos).toContain("Combo! +33%");
   });
 
+  it("charge dashes in from a distance", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1 }, dummy, 1);
+    let startGap = 0;
+    for (let i = 0; i < 200 && !startGap; i++) {
+      b.step();
+      if (b.dashing) startGap = b.distance;
+    }
+    expect(startGap).toBeGreaterThan(5);
+    expect(startGap).toBeLessThanOrEqual(6);
+    while (b.dashing) b.step();
+    expect(b.events.some((e) => e.type === "damage" && e.skill === "charge")).toBe(true);
+    expect(b.distance).toBeLessThanOrEqual(1.3 + 1e-6);
+  });
+
+  it("spartan kick knocks back 2m, then charge combos for +3s stun", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1 }, dummy, 1);
+    const x0 = b.mob.x;
+    for (let i = 0; i < 600 && !b.events.some((e) => e.type === "damage" && e.skill === "spartanKick"); i++) b.step();
+    while (b.mob.push !== 0) b.step();
+    // The dummy never walks, so all of its movement is the knockback.
+    expect(b.mob.x - x0).toBeCloseTo(2, 5);
+    let stun = 0;
+    for (let i = 0; i < 100 && !stun; i++) {
+      const before = b.events.length;
+      b.step();
+      if (b.events.slice(before).some((e) => e.type === "damage" && e.skill === "charge")) stun = b.mob.stun;
+    }
+    // Lv1 charge stuns 1s; the combo adds 3s.
+    expect(stun).toBeCloseTo(4, 5);
+    expect(b.events.some((e) => e.type === "status" && e.label === "Combo! Stun +3s")).toBe(true);
+  });
+
   it("no combo without the opener", () => {
     const b = new Battle(CLASSES.warrior.base, { shieldBash: 1, heavyStrike: 1 }, dummy, 1);
     for (let i = 0; i < 400; i++) b.step();

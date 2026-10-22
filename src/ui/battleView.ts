@@ -86,6 +86,10 @@ class Scene {
   shots: Shot[] = [];
   shake = 0;
   now = 0;
+  /** Real seconds the sim stays frozen, so big hits land with weight. */
+  hitstop = 0;
+  /** A large centred callout, for combos. */
+  banner: { text: string; born: number } | null = null;
   anim: Record<Side, FighterAnim> = {
     hero: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null, skill: null },
     mob: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null, skill: null },
@@ -170,7 +174,8 @@ export function playBattle(
         const color = target === "mob" ? (e.crit ? "#ffd84a" : "#ffffff") : "#ff6b5e";
         const absorbed = e.amount < 0.5;
         scene.floaters.push({ born: scene.now, side: target, text: absorbed ? "absorbed" : `${Math.round(e.amount)}${e.crit ? "!" : ""}`, color: absorbed ? "#6fb6ff" : color, size: absorbed ? 14 : e.crit ? 26 : 18, dx });
-        if (e.label) scene.floaters.push({ born: scene.now, side: attacker, text: e.label, color: "#9fd3ff", size: 15, dx: 0 });
+        if (e.skill) skillImpact(scene, e.skill, x, y, dir);
+        else if (e.label) scene.floaters.push({ born: scene.now, side: attacker, text: e.label, color: "#9fd3ff", size: 15, dx: 0 });
         break;
       }
       case "dot": {
@@ -194,6 +199,12 @@ export function playBattle(
         scene.add({ kind: "ring", dur: 0.25, x, y, color: "rgba(200,220,255,0.6)", size: 26, dir });
         break;
       case "status":
+        if (e.label.startsWith("Combo")) {
+          scene.banner = { text: e.label, born: scene.now };
+          scene.hitstop = Math.max(scene.hitstop, 0.2);
+          scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir });
+          break;
+        }
         scene.floaters.push({ born: scene.now, side: target, text: e.label, color: "#c9a7ff", size: 17, dx: 0 });
         if (e.label === "Enraged!") {
           scene.shake = 10;
@@ -209,7 +220,8 @@ export function playBattle(
     const dt = Math.min(0.05, (nowMs - last) / 1000);
     last = nowMs;
     scene.now = (nowMs - start) / 1000;
-    acc += dt * speed();
+    if (scene.hitstop > 0) scene.hitstop -= dt;
+    else acc += dt * speed();
     while (acc >= TICK && !battle.outcome) {
       battle.step();
       acc -= TICK;
@@ -318,6 +330,14 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
     const moving = isAdvancing(battle, side);
     a.moving += ((moving ? 1 : 0) - a.moving) * Math.min(1, dt * 10);
     if (moving || a.moving > 0.05) a.walk += dt * 9;
+    const f = side === "hero" ? battle.hero : battle.mob;
+    const dashing = side === "hero" && battle.dashing;
+    if (dashing) a.walk += dt * 14;
+    // Dust kicks up behind a dash and under a knocked-back fighter.
+    if ((dashing || f.push !== 0) && !reduced) {
+      const fx0 = px(f.x);
+      for (let i = 0; i < 2; i++) scene.particles.push({ x: fx0 + rand(-6, 6), y: GROUND - rand(0, 6), vx: (dashing ? -1 : 1) * rand(30, 90), vy: rand(-40, -10), life: 0, max: rand(0.3, 0.6), size: rand(3, 6), color: "rgba(190,170,140,0.7)", gravity: 60 });
+    }
   }
 }
 
@@ -350,7 +370,8 @@ function draw(
     // Melee lunges forward then eases back; ranged only rocks slightly.
     const lk = (t - a.lunge) / 0.28;
     const attack = lk >= 0 && lk < 1 ? lk : -1;
-    const lunge = attack >= 0 ? Math.sin(attack * Math.PI) * (melee ? 12 : 3) * facing : 0;
+    const skillHit = a.skill !== null && t - a.skill.at < 0.3;
+    const lunge = attack >= 0 ? Math.sin(attack * Math.PI) * (melee ? (skillHit ? 24 : 12) : 3) * facing : 0;
     const hk = (t - a.hurt) / 0.25;
     const hurt = hk >= 0 && hk < 1 ? hk : -1;
     const recoil = hurt >= 0 ? (1 - hurt) * -7 * facing : 0;
@@ -397,11 +418,69 @@ function draw(
     ctx.globalAlpha = 1;
   }
   drawFloaters(ctx, scene, battle, heights);
+  drawBanner(ctx, scene);
 
   ctx.fillStyle = "rgba(255,255,255,0.75)";
   ctx.font = "13px system-ui, sans-serif";
   ctx.textAlign = "left";
   ctx.fillText(`${battle.time.toFixed(1)}s`, 10, 18);
+}
+
+/** Per-skill impact: a big name callout plus effects loud enough to read at a glance. */
+function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 | -1): void {
+  const k = SKILLS[skill];
+  scene.floaters.push({ born: scene.now, side: dir === 1 ? "hero" : "mob", text: `${k.icon} ${k.name}`, color: "#ffd34d", size: 24, dx: 0 });
+  const hit = x - dir * 14;
+  switch (skill) {
+    case "shieldBash":
+      scene.add({ kind: "ring", dur: 0.45, x: hit, y, color: "#bfe6ff", size: 80, dir });
+      scene.add({ kind: "ring", dur: 0.3, x: hit, y, color: "#ffffff", size: 44, dir });
+      scene.burst(hit, y, 28, "#d8f0ff", 260, 200, 4);
+      scene.shake = Math.max(scene.shake, 9);
+      scene.hitstop = Math.max(scene.hitstop, 0.12);
+      break;
+    case "heavyStrike":
+      scene.add({ kind: "ring", dur: 0.4, x, y: GROUND - 4, color: "#ffb347", size: 70, dir });
+      scene.burst(x, GROUND - 2, 34, "rgba(170,140,100,0.9)", 220, 500, 6);
+      scene.burst(x, y, 16, "#ffd27a", 240, 300, 4);
+      scene.shake = Math.max(scene.shake, 10);
+      scene.hitstop = Math.max(scene.hitstop, 0.14);
+      break;
+    case "charge":
+      scene.add({ kind: "ring", dur: 0.5, x: hit, y, color: "#ffd34d", size: 90, dir });
+      scene.burst(hit, y, 30, "#ffe08a", 300, 250, 5);
+      scene.shake = Math.max(scene.shake, 11);
+      scene.hitstop = Math.max(scene.hitstop, 0.14);
+      break;
+    case "spartanKick":
+      scene.add({ kind: "ring", dur: 0.35, x: hit, y: y + 16, color: "#ffffff", size: 60, dir });
+      scene.burst(hit, y + 16, 20, "#f0e6d8", 240, 250, 4);
+      scene.shake = Math.max(scene.shake, 7);
+      scene.hitstop = Math.max(scene.hitstop, 0.1);
+      break;
+    default:
+      scene.shake = Math.max(scene.shake, 5);
+  }
+}
+
+function drawBanner(ctx: CanvasRenderingContext2D, scene: Scene): void {
+  const b = scene.banner;
+  if (!b) return;
+  const age = scene.now - b.born;
+  if (age > 1.6) {
+    scene.banner = null;
+    return;
+  }
+  const pop = age < 0.15 ? 0.5 + (age / 0.15) * 0.7 : age < 0.25 ? 1.2 - ((age - 0.15) / 0.1) * 0.2 : 1;
+  ctx.globalAlpha = Math.max(0, 1 - Math.max(0, age - 1.1) * 2);
+  ctx.textAlign = "center";
+  ctx.font = `900 ${Math.round(34 * pop)}px system-ui, sans-serif`;
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = "rgba(60,20,0,0.85)";
+  ctx.strokeText(b.text, W / 2, 70);
+  ctx.fillStyle = "#ffd34d";
+  ctx.fillText(b.text, W / 2, 70);
+  ctx.globalAlpha = 1;
 }
 
 /** True while a fighter is walking toward its foe, mirroring the movement rules in Battle. */
