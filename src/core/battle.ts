@@ -1,7 +1,7 @@
 import { Rng } from "./rng";
 import {
-  COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, SKILL_NUM as N, SPELL_HOLD, findReaction,
-  type Combo, type Derived, type Element, type Reaction, type SkillId, type SkillLevels,
+  BAND_EDGE, BAND_HOLD, BAND_NAME, BAND_OF, COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, OFF_BAND, SKILL_NUM as N, SPELL_HOLD, bandAt, findReaction,
+  type Band, type Combo, type Derived, type Element, type Reaction, type SkillId, type SkillLevels,
 } from "./skills";
 import type { Stats } from "./stats";
 
@@ -46,12 +46,16 @@ export type BattleEvent =
 
 export type Outcome = "win" | "loss";
 
-type ActiveId = "shieldBash" | "headshot" | "fireball" | "gust" | "tidalWave" | "stoneSpike" | "charge" | "spartanKick" | "heavyStrike";
+type ActiveId = "shieldBash" | "fireball" | "gust" | "tidalWave" | "stoneSpike" | "charge" | "spartanKick" | "heavyStrike"
+  | "longshot" | "pinningArrow" | "scatterShot" | "disengage";
+/** Ranger attacks in the order they are tried: the closer the mob, the more urgent. */
+const SHOTS = ["scatterShot", "pinningArrow", "longshot"] as const;
+const BAND_RANK: Record<Band, number> = { close: 0, mid: 1, far: 2 };
 const SPELLS = ["fireball", "gust", "tidalWave", "stoneSpike"] as const;
 
 /** Every attack skill winds up before it hits, so the art can gather momentum and a combo can pause
  * right before the hit. Seconds; skills not listed use WINDUP_DEFAULT. Charge's wind-up is its dash. */
-export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3, spartanKick: 0.2 };
+export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3, spartanKick: 0.2, longshot: 0.6 };
 export const WINDUP_DEFAULT = 0.25;
 
 /** Seconds after a skill lands before the next attack (and after a swing before the next skill), so two never look simultaneous. */
@@ -82,7 +86,7 @@ export class Battle {
   /** The hero is mid Charge dash. */
   dashing = false;
   /** A wound-up skill waiting to land. */
-  private pending: { skill: SkillId; at: number } | null = null;
+  private pending: { skill: SkillId; at: number; onBand: boolean } | null = null;
   /** The skill behind the hero's previous attack, or null if it was a plain swing; combos need it to be the very last attack. */
   private lastSkill: SkillId | null = null;
   private cds = new Map<SkillId, number>();
@@ -93,7 +97,16 @@ export class Battle {
   private poison: Dot[] = [];
   private burn: Dot[] = [];
   private secondWindUsed = false;
-  private snareSprung = false;
+  /** Seconds until a sprung Snare Trap re-arms. */
+  private snareRearm = 0;
+  /** Seconds left of the mob's Concussive slow, and how strong. */
+  private mobSlow = { pct: 0, left: 0 };
+  /** Seconds the hero dodges everything after Disengage. */
+  evade = 0;
+  /** When the mob last walked, so Poison knows it is on the move. */
+  private mobWalkedAt = 0;
+  /** When each ready Ranger shot started waiting for its band. */
+  private bandHold = new Map<SkillId, number>();
   private shieldRefill = 0;
   private enraged = false;
   /** The element waiting on the mob for another to react with it. */
@@ -102,7 +115,8 @@ export class Battle {
   derived: { kind: Derived; left: number; x: number } | null = null;
   /** When each ready spell started waiting for a better one (smart-cast). */
   private holdSince = new Map<SkillId, number>();
-  readonly snareX: number | null;
+  /** Where the armed Snare Trap sits, or null while it re-arms (or isn't learned). */
+  snareX: number | null;
 
   constructor(
     heroStats: Stats,
@@ -110,17 +124,19 @@ export class Battle {
     mobStats: Stats,
     seed: number,
     private mobEnrages = false,
+    heroStart = ARENA.heroStart,
   ) {
     this.rng = new Rng(seed);
     this.lv = (id) => levels[id] ?? 0;
-    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: ARENA.heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1 };
+    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1 };
     this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1 };
     if (this.lv("manaShield")) this.hero.shield = heroStats.maxHp * N.manaShield(this.lv("manaShield")).shield;
-    this.snareX = this.lv("snare") ? ARENA.heroStart + heroStats.range + 1.5 : null;
+    this.snareX = this.lv("snare") ? heroStart + BAND_EDGE.mid : null;
     // Active skills start at half cooldown so the first cast comes early.
-    for (const id of ["shieldBash", "headshot", ...SPELLS, "spartanKick", "heavyStrike"] as const) {
+    for (const id of ["shieldBash", ...SHOTS, ...SPELLS, "spartanKick", "heavyStrike"] as const) {
       if (this.lv(id)) this.cds.set(id, this.cooldown(id) / 2);
     }
+    if (this.lv("disengage")) this.cds.set("disengage", 0);
     // Charge opens the fight, with Shield Bash ready to follow it.
     if (this.lv("charge")) {
       this.cds.set("charge", 0);
@@ -135,6 +151,16 @@ export class Battle {
 
   get distance(): number {
     return this.mob.x - this.hero.x;
+  }
+
+  /** The hero has a skill that cares about range bands, so the view shows them. */
+  get usesBands(): boolean {
+    return (Object.keys(BAND_OF) as SkillId[]).some((id) => this.lv(id) > 0);
+  }
+
+  /** The Ranger band the mob is in now. */
+  get band(): Band {
+    return bandAt(this.distance);
   }
 
   runToEnd(): Outcome {
@@ -156,12 +182,7 @@ export class Battle {
   }
 
   private cooldown(id: ActiveId): number {
-    const lv = this.lv(id);
-    const base = id === "shieldBash" ? N.shieldBash(lv).cd : id === "headshot" ? N.headshot(lv).cd
-      : id === "fireball" ? N.fireball(lv).cd : id === "gust" ? N.gust(lv).cd
-      : id === "tidalWave" ? N.tidalWave(lv).cd : id === "stoneSpike" ? N.stoneSpike(lv).cd
-      : id === "charge" ? N.charge(lv).cd : id === "spartanKick" ? N.spartanKick(lv).cd : N.heavyStrike(lv).cd;
-    return base * this.hero.s.cdMult;
+    return N[id](this.lv(id)).cd * this.hero.s.cdMult;
   }
 
   private tickStatuses(): void {
@@ -170,6 +191,7 @@ export class Battle {
       // A root waits out a knockback slide, so "immobilized after the kick" starts once it lands.
       if (f.push === 0) f.root = Math.max(0, f.root - TICK);
       f.vuln = Math.max(0, f.vuln - TICK);
+      if (f.side === "hero") this.evade = Math.max(0, this.evade - TICK);
       if (f.vuln === 0) f.vulnMult = 1;
       if (f.push !== 0) {
         const step = Math.sign(f.push) * Math.min(Math.abs(f.push), Math.max(PUSH_MIN_STEP, Math.abs(f.push) * PUSH_SHARE));
@@ -180,10 +202,13 @@ export class Battle {
       if (f.s.regen > 0 && f.hp < f.s.maxHp) f.hp = Math.min(f.s.maxHp, f.hp + f.s.maxHp * f.s.regen * TICK);
     }
     this.tickElements();
+    this.tickTraps();
     for (const [list, kind] of [[this.poison, "poison"], [this.burn, "burn"]] as const) {
       let total = 0;
+      // Poison works faster while the mob is on the move.
+      const pace = kind === "poison" && this.mobWalking() ? N.poison(this.lv("poison")).walking : 1;
       for (const d of list) {
-        total += d.dps * TICK;
+        total += d.dps * pace * TICK;
         d.left -= TICK;
       }
       const alive = list.filter((d) => d.left > 0);
@@ -226,14 +251,23 @@ export class Battle {
 
     if (dist > me.s.range + 1e-6) {
       if (me.root > 0) return;
+      // The Ranger holds its ground while the mob comes to it, so the range bands and traps play out.
+      if (me.side === "hero" && me.s.range > 2 && !me.s.magic && this.mobWalking()) return;
       const dir = me.side === "hero" ? 1 : -1;
-      const slow = me.side === "mob" ? this.zone()?.slow ?? 0 : 0;
+      const slow = me.side === "mob" ? Math.max(this.zone()?.slow ?? 0, this.mobSlow.left > 0 ? this.mobSlow.pct : 0) : 0;
       const step = Math.min(me.s.speed * (1 - slow) * TICK, dist - me.s.range);
+      const from = me.x;
       me.x += dir * step;
-      if (me.side === "mob" && this.snareX !== null && !this.snareSprung && me.x <= this.snareX) {
-        this.snareSprung = true;
-        me.root = N.snare(this.lv("snare"));
-        this.emit({ t: this.time, type: "status", target: "mob", label: "Snared!" });
+      if (me.side === "mob" && step > 0) {
+        this.mobWalkedAt = this.time;
+        // The trap springs as the mob walks onto it, not when a knockback or a leap moves things around it.
+        if (this.snareX !== null && from > this.snareX && me.x <= this.snareX) {
+          const n = N.snare(this.lv("snare"));
+          this.snareX = null;
+          this.snareRearm = n.rearm;
+          me.root = Math.max(me.root, n.root);
+          this.emit({ t: this.time, type: "status", target: "mob", label: "Snared!" });
+        }
       }
       return;
     }
@@ -262,7 +296,9 @@ export class Battle {
       return f.s.interval / (1 - (this.zone()?.atkSlow ?? 0));
     }
     const berserk = this.lv("berserk") ? N.berserk(this.lv("berserk")) * (1 - f.hp / f.s.maxHp) : 0;
-    return f.s.interval / (1 + berserk);
+    // Rapid Fire's bonus counts twice when the mob is Close.
+    const panic = this.lv("rapidFire") && this.band === "close" ? N.rapidFire(this.lv("rapidFire")) : 0;
+    return f.s.interval / (1 + berserk) / (1 + panic);
   }
 
   /** Fire at most one ready active skill. Returns true if one fired: that is the hero's whole action this tick. */
@@ -280,13 +316,7 @@ export class Battle {
         return true;
       }
     }
-    for (const id of ["headshot"] as const) {
-      if (ready(id) && inRange) {
-        this.cds.set(id, this.cooldown(id));
-        this.windUp(id);
-        return true;
-      }
-    }
+    if (this.castRanger(dist, inRange)) return true;
     // Charge only when Shield Bash can follow it.
     const bashReady = !this.lv("shieldBash") || ready("shieldBash");
     if (ready("charge") && bashReady && !inRange && dist <= N.charge(this.lv("charge")).range && this.mob.push === 0) {
@@ -316,6 +346,58 @@ export class Battle {
     return false;
   }
 
+  /** Ranger: Disengage when the mob gets Close, and fire a ready shot once the mob is in its band,
+   * or after BAND_HOLD seconds of waiting in range, at OFF_BAND strength. */
+  private castRanger(dist: number, inRange: boolean): boolean {
+    const ready = (id: SkillId) => this.lv(id) > 0 && this.cds.get(id) === 0;
+    const band = bandAt(dist);
+    // Scatter Shot clears Close better than a leap, so Disengage waits while it is ready.
+    if (ready("disengage") && band === "close" && this.hero.x > 0.5 && this.mob.push === 0 && !ready("scatterShot")) {
+      const n = N.disengage(this.lv("disengage"));
+      this.cds.set("disengage", this.cooldown("disengage"));
+      this.hero.push -= Math.min(n.leap, this.hero.x);
+      this.evade = n.evade;
+      this.emit({ t: this.time, type: "status", target: "hero", label: "🤸 Disengage!" });
+      return true;
+    }
+    if (!inRange) {
+      this.bandHold.clear();
+      return false;
+    }
+    for (const id of SHOTS) {
+      if (!ready(id)) continue;
+      // No point pinning a mob that is already rooted.
+      if (id === "pinningArrow" && this.mob.root > 0) continue;
+      const onBand = BAND_OF[id] === band;
+      // A mob still walking in toward the shot's band will get there, so that wait doesn't count.
+      if (!onBand && this.mobWalking() && BAND_RANK[band] > BAND_RANK[BAND_OF[id]!]) {
+        this.bandHold.delete(id);
+        continue;
+      }
+      if (!onBand) {
+        if (!this.bandHold.has(id)) this.bandHold.set(id, this.time);
+        if (this.time - this.bandHold.get(id)! < BAND_HOLD - 1e-9) continue;
+      }
+      this.bandHold.delete(id);
+      this.cds.set(id, this.cooldown(id));
+      this.windUp(id, onBand);
+      return true;
+    }
+    return false;
+  }
+
+  /** Re-arm a sprung Snare Trap where Mid begins. */
+  private tickTraps(): void {
+    if (this.mobSlow.left > 0) this.mobSlow.left = Math.max(0, this.mobSlow.left - TICK);
+    if (!this.lv("snare") || this.snareX !== null) return;
+    this.snareRearm -= TICK;
+    if (this.snareRearm <= 0) this.snareX = this.hero.x + BAND_EDGE.mid;
+  }
+
+  private mobWalking(): boolean {
+    return this.time - this.mobWalkedAt < 2 * TICK - 1e-9 || this.mob.push !== 0;
+  }
+
   /** Close the gap at dash speed, then hit with Charge on arrival. */
   private dash(): void {
     const h = this.hero;
@@ -337,9 +419,9 @@ export class Battle {
   }
 
   /** Start a wound-up skill; it lands from act() once WINDUP has passed. */
-  private windUp(skill: SkillId): void {
+  private windUp(skill: SkillId, onBand = true): void {
     const at = this.time + (WINDUP[skill] ?? WINDUP_DEFAULT);
-    this.pending = { skill, at };
+    this.pending = { skill, at, onBand };
     this.rollDodge();
     this.emit({ t: this.time, type: "windup", target: "mob", skill, at, combo: this.peekCombo(skill)?.label });
   }
@@ -359,6 +441,9 @@ export class Battle {
   }
 
   private land(skill: SkillId): void {
+    // A Ranger shot's strength is set by the band when the draw started.
+    const f = this.pending?.onBand === false ? OFF_BAND : 1;
+    const off = f < 1 ? ` (off ${BAND_NAME[BAND_OF[skill]!]})` : "";
     this.pending = null;
     const h = this.hero;
     if (skill === "heavyStrike") return this.heroAttack(true);
@@ -384,7 +469,15 @@ export class Battle {
     }
     const el = ELEMENT_OF[skill];
     if (el && !this.outcome) this.applyElement(el);
-    if (skill === "headshot") this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!", "headshot");
+    if (skill === "longshot") this.physical(h.s.dmg * N.longshot(this.lv("longshot")).mult * f, "arrow", `Longshot!${off}`, "longshot");
+    if (skill === "pinningArrow") {
+      const n = N.pinningArrow(this.lv("pinningArrow"));
+      if (this.physical(h.s.dmg * n.mult, "arrow", `Pinned!${off}`, "pinningArrow")) this.mob.root = Math.max(this.mob.root, n.root * f);
+    }
+    if (skill === "scatterShot") {
+      const n = N.scatterShot(this.lv("scatterShot"));
+      if (this.physical(h.s.dmg * n.mult * f, "arrow", `Scatter Shot!${off}`, "scatterShot")) this.knock(n.push * f);
+    }
     if (skill === "shieldBash") {
       const n = N.shieldBash(this.lv("shieldBash"));
       const c = this.combo("shieldBash");
@@ -454,17 +547,10 @@ export class Battle {
     const landed = this.physical(h.s.dmg * mult, fx, label, skill);
     if (!landed) return;
 
-    if (this.lv("multishot")) {
-      const m = N.multishot(this.lv("multishot"));
-      for (let i = 0; i < m.arrows && !this.outcome; i++) this.physical(h.s.dmg * m.mult, "arrow");
-    }
     if (this.lv("poison")) {
       const p = N.poison(this.lv("poison"));
       if (this.poison.length < p.maxStacks) this.poison.push({ dps: p.dps, left: p.dur });
       else this.poison.sort((a, b) => a.left - b.left)[0].left = p.dur;
-    }
-    if (this.lv("knockback") && this.rng.next() < N.knockback(this.lv("knockback")).chance) {
-      this.mob.x = Math.min(ARENA.length, this.mob.x + N.knockback(1).dist);
     }
     if (this.lv("ignite") && h.s.magic) this.addBurn(h.s.dmg * 0.3, 2);
   }
@@ -481,8 +567,14 @@ export class Battle {
       return false;
     }
     const crit = this.rng.next() < h.s.crit;
-    let dmg = raw * (crit ? h.s.critMult : 1) * this.execute();
+    const far = this.band === "far";
+    const critMult = h.s.critMult + (far && this.lv("eagleEye") ? N.eagleEye(this.lv("eagleEye")).farCrit : 0);
+    let dmg = raw * (crit ? critMult : 1) * this.execute();
     if (!h.s.magic) dmg = Math.max(1, dmg - m.s.armor);
+    if (far && this.lv("concussive")) {
+      const c = N.concussive(this.lv("concussive"));
+      this.mobSlow = { pct: c.slow, left: c.dur };
+    }
     if (h.s.magic) dmg *= h.s.spellPower;
     this.dealToMob(dmg, crit, fx, label, skill);
     return true;
@@ -616,7 +708,7 @@ export class Battle {
       this.emit({ t: this.time, type: "dodge", target: "hero" });
       return;
     }
-    if (!m.s.magic && this.rng.next() < h.s.dodge) {
+    if (this.evade > 0 || (!m.s.magic && this.rng.next() < h.s.dodge)) {
       this.emit({ t: this.time, type: "dodge", target: "hero" });
       return;
     }

@@ -4,7 +4,7 @@ export type SkillId =
   // Warrior
   | "heavyStrike" | "bloodlust" | "ironSkin" | "shieldBash" | "berserk" | "thorns" | "secondWind" | "charge" | "spartanKick"
   // Ranger
-  | "multishot" | "poison" | "eagleEye" | "knockback" | "rapidFire" | "evasion" | "headshot" | "snare"
+  | "longshot" | "pinningArrow" | "scatterShot" | "disengage" | "snare" | "concussive" | "eagleEye" | "poison" | "rapidFire"
   // Mage
   | "fireball" | "gust" | "tidalWave" | "stoneSpike" | "manaShield" | "arcane" | "ignite" | "timeWarp" | "attunement" | "lingering"
   // Shared
@@ -45,6 +45,20 @@ export const COMBOS: Combo[] = [
   { pair: ["charge", "shieldBash"], stunMult: 2, label: "Combo! Stun ×2" },
   { pair: ["shieldBash", "heavyStrike"], dmgMult: 1.33, label: "Combo! +33%" },
 ];
+
+/** Ranger range bands, by distance from hero to mob. Each Ranger skill is strongest in one band. */
+export type Band = "close" | "mid" | "far";
+export const BAND_EDGE = { close: 3, mid: 6 };
+export const BAND_NAME: Record<Band, string> = { close: "Close", mid: "Mid", far: "Far" };
+
+export function bandAt(dist: number): Band {
+  return dist <= BAND_EDGE.close ? "close" : dist <= BAND_EDGE.mid ? "mid" : "far";
+}
+
+/** The band each Ranger attack wants. It holds up to BAND_HOLD seconds for it, then fires at OFF_BAND strength. */
+export const BAND_OF: Partial<Record<SkillId, Band>> = { longshot: "far", pinningArrow: "mid", scatterShot: "close" };
+export const BAND_HOLD = 2;
+export const OFF_BAND = 0.5;
 
 /** Mage elements. Each element spell marks the mob; a different element reacts with the mark. */
 export type Element = "fire" | "water" | "earth" | "air";
@@ -165,11 +179,17 @@ export const SKILL_NUM = {
   charge: (lv: number) => ({ cd: 6, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
   // Far enough that the Charge after it gets a proper run-up, still inside Charge's 6m range.
   spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 4, root: 1 }),
-  multishot: (lv: number) => ({ arrows: lv, mult: 0.5 }),
-  poison: (lv: number) => ({ dps: 1 + 1.5 * lv, dur: 4, maxStacks: 3 + 2 * lv }),
-  knockback: (lv: number) => ({ chance: 0.25 + 0.1 * lv, dist: 1.5 }),
-  headshot: (lv: number) => ({ cd: 8 - lv, mult: 3 + lv }),
-  snare: (lv: number) => 1 + 0.75 * lv,
+  longshot: (lv: number) => ({ cd: 7 - lv, mult: 2.5 + lv }),
+  pinningArrow: (lv: number) => ({ cd: 5, mult: 1.5 + 0.5 * lv, root: 0.5 + 0.5 * lv }),
+  // Far enough to throw a melee mob from Close back into Far.
+  scatterShot: (lv: number) => ({ cd: 7 - lv, mult: 1.5 + 0.5 * lv, push: 5 }),
+  disengage: (lv: number) => ({ cd: 9 - lv, leap: 3, evade: 1 + 0.5 * lv }),
+  /** The trap sits where Mid begins and re-arms after `rearm` seconds. */
+  snare: (lv: number) => ({ root: 1.5 + 0.75 * lv, rearm: 10 - 2 * lv }),
+  concussive: (lv: number) => ({ slow: 0.25 + 0.15 * lv, dur: 3 }),
+  eagleEye: (lv: number) => ({ crit: 0.1 * lv + 0.05, farCrit: 0.5 }),
+  poison: (lv: number) => ({ dps: 1 + 1.5 * lv, dur: 4, maxStacks: 3 + 2 * lv, walking: 2 }),
+  rapidFire: (lv: number) => 0.2 * lv,
   fireball: (lv: number) => ({ cd: 4, mult: 2 + lv, burn: 2 + 2 * lv }),
   gust: (lv: number) => ({ cd: [4, 3.5, 3][lv - 1] ?? 3, mult: 1 + 0.5 * lv, push: 1 }),
   tidalWave: (lv: number) => ({ cd: 8 - lv, mult: 1, push: 1 + 0.5 * lv }),
@@ -205,22 +225,25 @@ export const SKILLS: Record<SkillId, SkillDef> = {
   spartanKick: { id: "spartanKick", name: "Spartan Kick", icon: "🦶", cls: "warrior", kind: "active", cat: "attack",
     desc: (lv) => `Every ${S.spartanKick(lv).cd}s: kick for ×${num(S.spartanKick(lv).mult)} and knock the mob back ${S.spartanKick(lv).push}m, immobilized ${S.spartanKick(lv).root}s after it lands. Into the far wall: Wall Slam, +33% damage taken for 5s.` },
 
-  multishot: { id: "multishot", name: "Multishot", icon: "🎯", cls: "ranger", kind: "proc", cat: "attack",
-    desc: (lv) => `Fire ${S.multishot(lv).arrows} extra arrow(s) at ${pct(S.multishot(lv).mult)} damage.` },
-  poison: { id: "poison", name: "Poison Arrows", icon: "🧪", cls: "ranger", kind: "proc", cat: "attack",
-    desc: (lv) => `Hits add poison: ${S.poison(lv).dps}/s for ${S.poison(lv).dur}s, stacks ${S.poison(lv).maxStacks}×.` },
-  eagleEye: { id: "eagleEye", name: "Eagle Eye", icon: "🦅", cls: "ranger", kind: "passive", cat: "passive",
-    desc: (lv) => `+${pct(0.1 * lv + 0.05)} crit chance, +1 range.`, apply: (s, lv) => { s.crit += 0.1 * lv + 0.05; s.range += 1; } },
-  knockback: { id: "knockback", name: "Knockback", icon: "💨", cls: "ranger", kind: "proc", cat: "defense",
-    desc: (lv) => `${pct(S.knockback(lv).chance)} chance a hit pushes the mob back.` },
-  rapidFire: { id: "rapidFire", name: "Rapid Fire", icon: "⚡", cls: "ranger", kind: "passive", cat: "passive",
-    desc: (lv) => `+${pct(0.2 * lv)} attack speed.`, apply: (s, lv) => { s.interval /= 1 + 0.2 * lv; } },
-  evasion: { id: "evasion", name: "Evasion", icon: "🍃", cls: "ranger", kind: "passive", cat: "defense",
-    desc: (lv) => `+${pct(0.1 * lv + 0.05)} dodge.`, apply: (s, lv) => { s.dodge += 0.1 * lv + 0.05; } },
-  headshot: { id: "headshot", name: "Headshot", icon: "☠️", cls: "ranger", kind: "active", cat: "attack",
-    desc: (lv) => `Every ${S.headshot(lv).cd}s: an arrow for ×${S.headshot(lv).mult}.` },
+  longshot: { id: "longshot", name: "Longshot", icon: "🏹", cls: "ranger", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${S.longshot(lv).cd}s: a long draw for ×${S.longshot(lv).mult}. Far band.` },
+  pinningArrow: { id: "pinningArrow", name: "Pinning Arrow", icon: "📌", cls: "ranger", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${S.pinningArrow(lv).cd}s: ×${S.pinningArrow(lv).mult} and root ${S.pinningArrow(lv).root}s. Mid band.` },
+  scatterShot: { id: "scatterShot", name: "Scatter Shot", icon: "🎯", cls: "ranger", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${S.scatterShot(lv).cd}s: point-blank blast for ×${num(S.scatterShot(lv).mult)}, knocks the mob back ${S.scatterShot(lv).push}m. Close band.` },
+  disengage: { id: "disengage", name: "Disengage", icon: "🤸", cls: "ranger", kind: "active", cat: "defense",
+    desc: (lv) => `Every ${S.disengage(lv).cd}s, when the mob gets Close: leap back ${S.disengage(lv).leap}m and dodge everything for ${S.disengage(lv).evade}s.` },
   snare: { id: "snare", name: "Snare Trap", icon: "🪤", cls: "ranger", kind: "proc", cat: "defense",
-    desc: (lv) => `A trap roots the mob for ${S.snare(lv)}s as it approaches.` },
+    desc: (lv) => `A trap at the edge of Mid roots the mob ${num(S.snare(lv).root)}s. Re-arms ${S.snare(lv).rearm}s after it springs.` },
+  concussive: { id: "concussive", name: "Concussive Arrows", icon: "💫", cls: "ranger", kind: "proc", cat: "defense",
+    desc: (lv) => `Hits in the Far band slow the mob ${pct(S.concussive(lv).slow)} for ${S.concussive(lv).dur}s.` },
+  eagleEye: { id: "eagleEye", name: "Eagle Eye", icon: "🦅", cls: "ranger", kind: "passive", cat: "passive",
+    desc: (lv) => `+${pct(S.eagleEye(lv).crit)} crit chance, +1 range. Crits in the Far band deal +${pct(S.eagleEye(lv).farCrit)} more.`,
+    apply: (s, lv) => { s.crit += S.eagleEye(lv).crit; s.range += 1; } },
+  poison: { id: "poison", name: "Poison Arrows", icon: "🧪", cls: "ranger", kind: "proc", cat: "passive",
+    desc: (lv) => `Hits add poison: ${S.poison(lv).dps}/s for ${S.poison(lv).dur}s, stacks ${S.poison(lv).maxStacks}×. Ticks ×${S.poison(lv).walking} while the mob walks.` },
+  rapidFire: { id: "rapidFire", name: "Rapid Fire", icon: "⚡", cls: "ranger", kind: "passive", cat: "passive",
+    desc: (lv) => `+${pct(S.rapidFire(lv))} attack speed, doubled while the mob is Close.`, apply: (s, lv) => { s.interval /= 1 + S.rapidFire(lv); } },
 
   fireball: { id: "fireball", name: "Fireball", icon: "🔥", cls: "mage", kind: "active", cat: "attack",
     desc: (lv) => `Every ${S.fireball(lv).cd}s: ×${S.fireball(lv).mult} damage and burn ${S.fireball(lv).burn}/s for 3s.` },

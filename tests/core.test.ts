@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ARENA, Battle, SKILL_RECOVERY, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
-import { COMBOS, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
+import { BAND_EDGE, COMBOS, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
 import { CLASSES, stats } from "../src/core/stats";
 
 const dummy = stats({ maxHp: 1000, dmg: 0, interval: 99, range: 1.2, speed: 0 });
@@ -103,7 +103,7 @@ describe("battle", () => {
       r.step();
     }
     expect(w.distance).toBeLessThanOrEqual(1.3 + 1e-6);
-    expect(r.hero.x).toBeCloseTo(2 + (20 - 2 - 8), 0);
+    expect(r.hero.x).toBeCloseTo(20 - CLASSES.ranger.base.range, 0);
     expect(r.mob.hp).toBeLessThan(1000);
   });
 
@@ -336,7 +336,7 @@ describe("battle", () => {
   it.each([
     ["warrior", { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 2 }],
     ["mage", { fireball: 2, gust: 2, tidalWave: 2, stoneSpike: 2 }],
-    ["ranger", { headshot: 3, rapidFire: 3 }],
+    ["ranger", { longshot: 3, pinningArrow: 3, scatterShot: 3, rapidFire: 3 }],
   ] as const)("%s never starts a skill right on top of another attack", (cls, levels) => {
     const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
     const b = new Battle(CLASSES[cls].base, levels, wall, 1);
@@ -428,5 +428,55 @@ describe("battle", () => {
 
   it("times out as a loss", () => {
     expect(new Battle(CLASSES.warrior.base, {}, stats({ maxHp: 1e9, dmg: 0, interval: 99, range: 1, speed: 1 }), 1).runToEnd()).toBe("loss");
+  });
+});
+
+describe("ranger range bands", () => {
+  const walker = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 2 });
+  const start = CLASSES.ranger.start!;
+  const ranger = (levels: Parameters<typeof heroStats>[1], mob = walker) =>
+    new Battle(heroStats(CLASSES.ranger.base, levels), levels, mob, 1, false, start);
+
+  it("holds its ground while the mob walks in", () => {
+    const b = ranger({});
+    for (let i = 0; i < 100; i++) b.step();
+    expect(b.hero.x).toBe(start);
+  });
+
+  it("Longshot waits for the Far band, Scatter Shot for Close", () => {
+    const b = ranger({ longshot: 1, scatterShot: 1 });
+    b.runToEnd();
+    const first = (skill: string) => b.events.find((e) => e.type === "damage" && e.skill === skill);
+    for (const skill of ["longshot", "scatterShot"]) {
+      const e = first(skill);
+      expect(e?.type === "damage" && e.label).toBeTruthy();
+      if (e?.type === "damage") expect(e.label).not.toContain("off");
+    }
+  });
+
+  it("Scatter Shot throws a Close mob back out of Close", () => {
+    const b = ranger({ scatterShot: 1 });
+    let pushed = false;
+    while (!b.outcome && !pushed) {
+      b.step();
+      pushed = b.events.some((e) => e.type === "damage" && e.skill === "scatterShot");
+    }
+    while (b.mob.push !== 0) b.step();
+    expect(b.distance).toBeGreaterThan(BAND_EDGE.mid);
+  });
+
+  it("Snare Trap re-arms after it springs", () => {
+    const b = ranger({ snare: 3, scatterShot: 3 });
+    for (let i = 0; i < 40 * 20; i++) b.step();
+    expect(b.events.filter((e) => e.type === "status" && e.label === "Snared!").length).toBeGreaterThan(1);
+  });
+
+  it("Disengage leaps back and dodges for a moment", () => {
+    const biter = stats({ maxHp: 1e6, dmg: 5, interval: 0.5, range: 1.2, speed: 2 });
+    const b = ranger({ disengage: 1 }, biter);
+    while (!b.outcome && !b.events.some((e) => e.type === "status" && e.label.includes("Disengage"))) b.step();
+    expect(b.evade).toBeGreaterThan(0);
+    for (let i = 0; i < 10; i++) b.step();
+    expect(b.hero.x).toBeCloseTo(start - SKILL_NUM.disengage(1).leap, 5);
   });
 });
