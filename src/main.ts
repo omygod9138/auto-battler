@@ -263,6 +263,13 @@ app.addEventListener("click", (e) => {
   render();
 });
 
+// Build stamp in the corner, outside #app so every screen keeps it.
+const stamp = document.createElement("div");
+stamp.className = "build-stamp";
+stamp.textContent = `${__BUILD_COMMIT__} · ${__BUILD_TIME__.slice(0, 16).replace("T", " ")} UTC${import.meta.env.DEV ? " · dev" : ""}`;
+stamp.title = "Build: commit and build time";
+document.body.append(stamp);
+
 // Missing art just means the procedural characters are used.
 if (new URLSearchParams(location.search).has("sandbox")) loadSprites().finally(() => startSandbox(app));
 else loadSprites().finally(render);
