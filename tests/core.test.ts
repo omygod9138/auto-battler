@@ -103,7 +103,7 @@ describe("battle", () => {
       r.step();
     }
     expect(w.distance).toBeLessThanOrEqual(1.3 + 1e-6);
-    expect(r.hero.x).toBeCloseTo(2 + (20 - 2 - 8), 0);
+    expect(r.hero.x).toBeCloseTo(20 - CLASSES.ranger.base.range, 0);
     expect(r.mob.hp).toBeLessThan(1000);
   });
 

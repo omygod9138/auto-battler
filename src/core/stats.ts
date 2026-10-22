@@ -63,7 +63,7 @@ export const CLASSES: Record<ClassId, HeroClass> = {
   ranger: {
     id: "ranger", name: "Ranger", role: "Ranged", icon: "🏹",
     desc: "Fast arrows from a distance. Each shot is strongest at its own range: Far, Mid or Close.",
-    base: stats({ maxHp: 90, dmg: 9, interval: 0.75, range: 8, speed: 2.5 }),
+    base: stats({ maxHp: 90, dmg: 9, interval: 0.75, range: 12, speed: 2.5 }),
     // Room behind to Disengage into.
     start: 5,
   },

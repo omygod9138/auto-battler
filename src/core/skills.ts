@@ -48,7 +48,7 @@ export const COMBOS: Combo[] = [
 
 /** Ranger range bands, by distance from hero to mob. Each Ranger skill is strongest in one band. */
 export type Band = "close" | "mid" | "far";
-export const BAND_EDGE = { close: 2.5, mid: 5 };
+export const BAND_EDGE = { close: 3, mid: 6 };
 export const BAND_NAME: Record<Band, string> = { close: "Close", mid: "Mid", far: "Far" };
 
 export function bandAt(dist: number): Band {
@@ -182,7 +182,7 @@ export const SKILL_NUM = {
   longshot: (lv: number) => ({ cd: 7 - lv, mult: 2.5 + lv }),
   pinningArrow: (lv: number) => ({ cd: 5, mult: 1.5 + 0.5 * lv, root: 0.5 + 0.5 * lv }),
   // Far enough to throw a melee mob from Close back into Far.
-  scatterShot: (lv: number) => ({ cd: 7 - lv, mult: 1.5 + 0.5 * lv, push: 4 }),
+  scatterShot: (lv: number) => ({ cd: 7 - lv, mult: 1.5 + 0.5 * lv, push: 5 }),
   disengage: (lv: number) => ({ cd: 9 - lv, leap: 3, evade: 1 + 0.5 * lv }),
   /** The trap sits where Mid begins and re-arms after `rearm` seconds. */
   snare: (lv: number) => ({ root: 1.5 + 0.75 * lv, rearm: 10 - 2 * lv }),
