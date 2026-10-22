@@ -46,7 +46,7 @@ type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" 
 /** Skills that wind up before they hit, in seconds, so the art can gather momentum first. */
 export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3 };
 
-/** Seconds after a skill lands before the next normal swing, so the two never look simultaneous. */
+/** Seconds after a skill lands before the next attack (and after a swing before the next skill), so two never look simultaneous. */
 export const SKILL_RECOVERY = 0.35;
 
 /** Charge dash and knockback slide speeds, in arena units per second. */
@@ -76,6 +76,8 @@ export class Battle {
   /** The skill behind the hero's previous attack, or null if it was a plain swing; combos need it to be the very last attack. */
   private lastSkill: SkillId | null = null;
   private cds = new Map<SkillId, number>();
+  /** When the hero last hit (swing or skill); skills wait SKILL_RECOVERY after it too. */
+  private lastHit = -99;
   private poison: Dot[] = [];
   private burn: Dot[] = [];
   private secondWindUsed = false;
@@ -197,7 +199,8 @@ export class Battle {
     }
     const dist = Math.abs(foe.x - me.x);
     // One action per tick: a skill (including the start of a dash or wind-up) replaces the swing.
-    if (me.side === "hero" && this.castActives(dist)) return this.recover();
+    const recovered = this.time - this.lastHit >= SKILL_RECOVERY - 1e-9;
+    if (me.side === "hero" && recovered && this.castActives(dist)) return this.recover();
     if (this.outcome) return;
 
     if (dist > me.s.range + 1e-6) {
@@ -406,6 +409,7 @@ export class Battle {
   private physical(raw: number, fx: FxKind, label?: string, skill?: SkillId): boolean {
     const h = this.hero;
     const m = this.mob;
+    this.lastHit = this.time;
     if (!h.s.magic && this.rng.next() < m.s.dodge) {
       this.emit({ t: this.time, type: "dodge", target: "mob" });
       return false;
@@ -420,6 +424,7 @@ export class Battle {
 
   /** Spells never miss and ignore armor. */
   private spell(raw: number, fx: FxKind, label: string, skill?: SkillId): void {
+    this.lastHit = this.time;
     const crit = this.rng.next() < this.hero.s.crit;
     this.dealToMob(raw * this.hero.s.spellPower * (crit ? this.hero.s.critMult : 1) * this.execute(), crit, fx, label, skill);
   }

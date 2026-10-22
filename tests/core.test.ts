@@ -175,10 +175,11 @@ describe("battle", () => {
     // The fight drifts into the far wall; kicks must still open a gap there.
     for (let i = 0; i < 59 * 20; i++) b.step();
     const count = (pred: (e: (typeof b.events)[number]) => boolean) => b.events.filter(pred).length;
-    const charges = count((e) => e.type === "damage" && e.skill === "charge");
+    // A Charge in the last moments may not get its Bash before the cut-off.
+    const charges = count((e) => e.type === "damage" && e.skill === "charge" && e.t < 57);
     expect(charges).toBeGreaterThan(4);
-    expect(count((e) => e.type === "status" && e.label === "Combo! Stun ×2")).toBe(charges);
-    expect(count((e) => e.type === "status" && e.label === "Combo! Stun +3s")).toBe(charges - 1);
+    expect(count((e) => e.type === "status" && e.label === "Combo! Stun ×2" && e.t < 58)).toBe(charges);
+    expect(count((e) => e.type === "status" && e.label === "Combo! Stun +3s" && e.t < 57)).toBe(charges - 1);
   });
 
   it("a kick into the far wall slams: +33% damage taken for 5s", () => {
@@ -271,6 +272,30 @@ describe("battle", () => {
       // A normal swing (or a swing-borne Heavy Strike) waits out the recovery after a skill.
       if (hits[i - 1].skill && (!hits[i].skill || hits[i].skill === "heavyStrike")) expect(gap).toBeGreaterThanOrEqual(SKILL_RECOVERY - 1e-9);
     }
+  });
+
+  it.each([
+    ["warrior", { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 2 }],
+    ["mage", { fireball: 2, frostNova: 2, meteor: 2, static: 2 }],
+    ["ranger", { headshot: 3, rapidFire: 3 }],
+  ] as const)("%s never starts a skill right on top of another attack", (cls, levels) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES[cls].base, levels, wall, 1);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    // One entry per attack: extra arrows and bolts land in the same tick as their swing.
+    const attacks: { t: number; skill?: string }[] = [];
+    for (const e of b.events) {
+      if (e.type !== "damage" || e.target !== "mob") continue;
+      const last = attacks[attacks.length - 1];
+      if (last && Math.abs(last.t - e.t) < 1e-9) last.skill ??= e.skill;
+      else attacks.push({ t: e.t, skill: e.skill });
+    }
+    const bad: unknown[] = [];
+    for (let i = 1; i < attacks.length; i++) {
+      if (!attacks[i].skill && !attacks[i - 1].skill) continue;
+      if (attacks[i].t - attacks[i - 1].t < SKILL_RECOVERY - 1e-6) bad.push([attacks[i - 1], attacks[i]]);
+    }
+    expect(bad).toEqual([]);
   });
 
   it("no combo from a single skill", () => {
