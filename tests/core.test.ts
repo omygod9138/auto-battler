@@ -94,6 +94,20 @@ describe("battle", () => {
     expect(r.mob.hp).toBeLessThan(1000);
   });
 
+  it("bloodlust reports a heal for each hit once the hero is hurt", () => {
+    // Armor keeps each heal under 1 HP, which used to go unreported.
+    const armored = stats({ maxHp: 1000, dmg: 0, interval: 99, range: 1.2, speed: 0, armor: 3 });
+    const b = new Battle(CLASSES.warrior.base, { bloodlust: 1 }, armored, 1);
+    for (let i = 0; i < 200; i++) {
+      b.hero.hp = b.hero.s.maxHp / 2;
+      b.step();
+    }
+    const hits = b.events.filter((e) => e.type === "damage" && e.target === "mob").length;
+    const heals = b.events.filter((e) => e.type === "heal").length;
+    expect(hits).toBeGreaterThan(3);
+    expect(heals).toBe(hits);
+  });
+
   it("frost nova freezes and fireball burns", () => {
     const b = new Battle(CLASSES.mage.base, { frostNova: 1, fireball: 1 }, dummy, 1);
     for (let i = 0; i < 200; i++) b.step();
