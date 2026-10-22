@@ -46,6 +46,9 @@ type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" 
 /** Skills that wind up before they hit, in seconds, so the art can gather momentum first. */
 export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3 };
 
+/** Seconds after a skill lands before the next normal swing, so the two never look simultaneous. */
+export const SKILL_RECOVERY = 0.35;
+
 /** Charge dash and knockback slide speeds, in arena units per second. */
 const DASH_SPEED = 16;
 const PUSH_SPEED = 12;
@@ -186,13 +189,16 @@ export class Battle {
     if (me.stun > 0 || me.push !== 0) return;
     if (me.side === "hero" && this.dashing) return this.dash();
     if (me.side === "hero" && this.pending) {
-      if (this.time >= this.pending.at - 1e-9) this.land(this.pending.skill);
+      if (this.time >= this.pending.at - 1e-9) {
+        this.land(this.pending.skill);
+        this.recover();
+      }
       return;
     }
     const dist = Math.abs(foe.x - me.x);
-    if (me.side === "hero") this.castActives(dist);
-    // A skill that just started (dash or wind-up) takes the rest of the tick.
-    if (this.outcome || (me.side === "hero" && (this.dashing || this.pending))) return;
+    // One action per tick: a skill (including the start of a dash or wind-up) replaces the swing.
+    if (me.side === "hero" && this.castActives(dist)) return this.recover();
+    if (this.outcome) return;
 
     if (dist > me.s.range + 1e-6) {
       if (me.root > 0) return;
@@ -229,7 +235,8 @@ export class Battle {
     return f.s.interval / (1 + berserk);
   }
 
-  private castActives(dist: number): void {
+  /** Fire at most one ready active skill. Returns true if one fired: that is the hero's whole action this tick. */
+  private castActives(dist: number): boolean {
     const h = this.hero;
     const ready = (id: SkillId) => this.lv(id) > 0 && this.cds.get(id) === 0;
     // Same tolerance as movement: fighters stop at range plus float error.
@@ -239,27 +246,31 @@ export class Battle {
       this.cds.set("frostNova", this.cooldown("frostNova"));
       this.mob.stun = Math.max(this.mob.stun, n.freeze);
       this.spell(h.s.dmg * n.mult, "frost", "Frost Nova", "frostNova");
+      return true;
     }
     if (ready("meteor") && inRange) {
       this.cds.set("meteor", this.cooldown("meteor"));
       this.spell(h.s.dmg * N.meteor(this.lv("meteor")).mult, "meteor", "Meteor!", "meteor");
+      return true;
     }
     if (ready("fireball") && inRange) {
       const n = N.fireball(this.lv("fireball"));
       this.cds.set("fireball", this.cooldown("fireball"));
       this.spell(h.s.dmg * n.mult, "fireball", "Fireball", "fireball");
       this.addBurn(n.burn, 3);
+      return true;
     }
     if (ready("headshot") && inRange) {
       this.cds.set("headshot", this.cooldown("headshot"));
       this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!", "headshot");
+      return true;
     }
     // Charge only when Shield Bash can follow it.
     const bashReady = !this.lv("shieldBash") || ready("shieldBash");
     if (ready("charge") && bashReady && !inRange && dist <= N.charge(this.lv("charge")).range && this.mob.push === 0) {
       this.cds.set("charge", this.cooldown("charge"));
       this.dashing = true;
-      return;
+      return true;
     }
     // Hold the bash until Charge has opened the fight, so the two can combo. With Spartan Kick
     // Charge comes back every cycle, so the bash is saved for right after each Charge.
@@ -267,7 +278,8 @@ export class Battle {
     const saveBash = this.lv("charge") > 0 && this.lv("spartanKick") > 0 && this.lastSkill !== "charge";
     if (ready("shieldBash") && inRange && !awaitCharge && !saveBash) {
       this.cds.set("shieldBash", this.cooldown("shieldBash"));
-      return this.windUp("shieldBash");
+      this.windUp("shieldBash");
+      return true;
     }
     // Kick only when Charge (and the Bash after it) can follow, so the knockback sets up the combo.
     if (ready("spartanKick") && dist <= h.s.range + 1e-6 && !awaitCharge && (!this.lv("charge") || (ready("charge") && bashReady))) {
@@ -285,7 +297,9 @@ export class Battle {
           this.emit({ t: this.time, type: "status", target: "mob", label: "Wall Slam!" });
         }
       }
+      return true;
     }
+    return false;
   }
 
   /** Close the gap at dash speed, then hit with Charge on arrival. */
@@ -296,11 +310,16 @@ export class Battle {
     if (gap > DASH_SPEED * TICK) return;
     this.dashing = false;
     this.charged = true;
+    this.recover();
     const n = N.charge(this.lv("charge"));
     const c = this.combo("charge");
     if (this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Charge!", "charge")) {
       this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1) + (c?.stunAdd ?? 0));
     }
+  }
+
+  private recover(): void {
+    this.hero.atkTimer = Math.max(this.hero.atkTimer, SKILL_RECOVERY);
   }
 
   /** Start a wound-up skill; it lands from act() once WINDUP has passed. */

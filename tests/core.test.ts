@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ARENA, Battle, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
+import { ARENA, Battle, SKILL_RECOVERY, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
 import { COMBOS, MAX_LEVEL, SKILLS, heroStats } from "../src/core/skills";
@@ -257,6 +257,20 @@ describe("battle", () => {
     const zaps = b.events.filter((e) => e.type === "damage" && e.label === "Zap!").map((e) => e.t);
     expect(zaps.length).toBeGreaterThan(5);
     for (let i = 1; i < zaps.length; i++) expect(zaps[i] - zaps[i - 1]).toBeGreaterThanOrEqual(4 - 1e-6);
+  });
+
+  it.each([1, 2, 3])("never fires a skill and another attack together (seed %i)", (seed) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1, shieldBash: 1, heavyStrike: 1 }, wall, seed);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    const hits = b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" ? [e] : []));
+    expect(hits.length).toBeGreaterThan(20);
+    for (let i = 1; i < hits.length; i++) {
+      const gap = hits[i].t - hits[i - 1].t;
+      expect(gap).toBeGreaterThan(1e-9);
+      // A normal swing (or a swing-borne Heavy Strike) waits out the recovery after a skill.
+      if (hits[i - 1].skill && (!hits[i].skill || hits[i].skill === "heavyStrike")) expect(gap).toBeGreaterThanOrEqual(SKILL_RECOVERY - 1e-9);
+    }
   });
 
   it("no combo from a single skill", () => {
