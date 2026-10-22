@@ -1,7 +1,7 @@
 import { Battle } from "./battle";
 import { mobForRound, type MobDef } from "./mobs";
 import { Rng, hashSeed } from "./rng";
-import { MAX_LEVEL, SKILLS, heroStats, type SkillId, type SkillLevels } from "./skills";
+import { MAX_LEVEL, SKILLS, heroStats, type SkillCat, type SkillId, type SkillLevels } from "./skills";
 import { CLASSES, type ClassId, type Stats } from "./stats";
 
 export const OFFER_SIZE = 3;
@@ -34,15 +34,20 @@ export function skillPool(s: RunState): SkillId[] {
   );
 }
 
+/** One card per slot: a class Attack skill, a class Defense skill, and a Passive (class passives or shared skills). */
 function rollOffers(s: RunState): SkillId[] {
   const rng = new Rng(hashSeed(s.seed, "offer", s.round, s.rerollCount));
   const pool = skillPool(s);
-  const own = pool.filter((id) => SKILLS[id].cls === s.cls);
-  const shared = pool.filter((id) => SKILLS[id].cls === "any");
-  // Guarantee at least two class skills while any remain, so classes feel distinct.
-  const picks = rng.sample(own, Math.min(2, own.length));
-  const rest = [...own.filter((id) => !picks.includes(id)), ...shared];
-  return [...picks, ...rng.sample(rest, OFFER_SIZE - picks.length)];
+  const own = (cat: SkillCat) => pool.filter((id) => SKILLS[id].cls === s.cls && SKILLS[id].cat === cat);
+  const slots = [own("attack"), own("defense"), [...own("passive"), ...pool.filter((id) => SKILLS[id].cls === "any")]];
+  const picks: SkillId[] = [];
+  for (const slot of slots) {
+    const left = slot.filter((id) => !picks.includes(id));
+    if (left.length) picks.push(rng.pick(left));
+  }
+  // A slot whose skills are all maxed is filled from whatever else is left.
+  const rest = pool.filter((id) => !picks.includes(id));
+  return [...picks, ...rng.sample(rest, Math.min(rest.length, OFFER_SIZE - picks.length))];
 }
 
 export function reroll(s: RunState): void {

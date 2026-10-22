@@ -26,10 +26,23 @@ describe("run loop", () => {
     expect(s.phase).toBe("over");
   });
 
-  it("offers only own-class or shared skills, at least two from the class", () => {
-    const s = newRun(5, "ranger");
-    expect(s.offers.every((id) => ["ranger", "any"].includes(SKILLS[id].cls))).toBe(true);
-    expect(s.offers.filter((id) => SKILLS[id].cls === "ranger").length).toBeGreaterThanOrEqual(2);
+  it.each(["warrior", "ranger", "mage"] as const)("%s offers one attack, one defense and one passive or shared skill", (cls) => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const s = newRun(seed, cls);
+      const [atk, def, pas] = s.offers.map((id) => SKILLS[id]);
+      expect([atk.cls, atk.cat]).toEqual([cls, "attack"]);
+      expect([def.cls, def.cat]).toEqual([cls, "defense"]);
+      expect(pas.cls === "any" || (pas.cls === cls && pas.cat === "passive")).toBe(true);
+    }
+  });
+
+  it("a maxed-out slot is filled from the other skills", () => {
+    const s = newRun(4, "warrior");
+    for (const id of Object.keys(SKILLS) as (keyof typeof SKILLS)[]) if (SKILLS[id].cat === "attack") s.levels[id] = MAX_LEVEL;
+    reroll(s);
+    expect(s.offers).toHaveLength(3);
+    expect(new Set(s.offers).size).toBe(3);
+    expect(s.offers.some((id) => SKILLS[id].cat === "attack")).toBe(false);
   });
 
   it("picking a skill again levels it, and maxed skills leave the pool", () => {
