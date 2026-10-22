@@ -71,7 +71,7 @@ export const SKILL_NUM = {
   // Same cooldown as Shield Bash, so every Charge can be followed by a Bash.
   charge: (lv: number) => ({ cd: 6, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
   // Far enough that the Charge after it gets a proper run-up, still inside Charge's 6m range.
-  spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 4 }),
+  spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 4, root: 1 }),
   multishot: (lv: number) => ({ arrows: lv, mult: 0.5 }),
   poison: (lv: number) => ({ dps: 1 + 1.5 * lv, dur: 4, maxStacks: 3 + 2 * lv }),
   knockback: (lv: number) => ({ chance: 0.25 + 0.1 * lv, dist: 1.5 }),
@@ -106,7 +106,7 @@ export const SKILLS: Record<SkillId, SkillDef> = {
   charge: { id: "charge", name: "Charge", icon: "🐂", cls: "warrior", kind: "proc", cat: "attack",
     desc: (lv) => `Every ${S.charge(lv).cd}s: from up to ${S.charge(lv).range}m away, dash in for ×${S.charge(lv).mult} and stun ${S.charge(lv).stun}s.` },
   spartanKick: { id: "spartanKick", name: "Spartan Kick", icon: "🦶", cls: "warrior", kind: "active", cat: "attack",
-    desc: (lv) => `Every ${S.spartanKick(lv).cd}s: kick for ×${num(S.spartanKick(lv).mult)} and knock the mob back ${S.spartanKick(lv).push}m. Into the far wall: Wall Slam, +33% damage taken for 5s.` },
+    desc: (lv) => `Every ${S.spartanKick(lv).cd}s: kick for ×${num(S.spartanKick(lv).mult)} and knock the mob back ${S.spartanKick(lv).push}m, immobilized ${S.spartanKick(lv).root}s after it lands. Into the far wall: Wall Slam, +33% damage taken for 5s.` },
 
   multishot: { id: "multishot", name: "Multishot", icon: "🎯", cls: "ranger", kind: "proc", cat: "attack",
     desc: (lv) => `Fire ${S.multishot(lv).arrows} extra arrow(s) at ${pct(S.multishot(lv).mult)} damage.` },

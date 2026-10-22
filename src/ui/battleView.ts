@@ -215,11 +215,16 @@ export function playBattle(
           for (let i = 0; i < 4; i++) scene.particles.push({ x: x + rand(-18, 18), y: y + rand(-10, 20), vx: 0, vy: rand(-45, -25), life: 0, max: 0.8, size: 12, color: "#7dffa0", gravity: 0, glyph: "+" });
         }
         break;
-      case "dodge":
-        scene.floaters.push({ born: scene.now, side: target, text: "miss", color: "#b9c2cc", size: 15, dx });
+      case "dodge": {
+        scene.floaters.push({ born: scene.now, side: target, text: "Dodge!", color: "#b9c2cc", size: 15, dx });
         scene.anim[target].lunge = -9;
+        // A dodged skill still swings through: play its follow-through as a whiff instead of holding the wind-up.
+        const swinger = scene.anim[target === "mob" ? "hero" : "mob"];
+        if (swinger.skill?.phase === "windup") swinger.skill = { ...swinger.skill, at: scene.now, phase: "strike" };
+        swinger.lunge = scene.now;
         scene.add({ kind: "ring", dur: 0.25, x, y, color: "rgba(200,220,255,0.6)", size: 26, dir });
         break;
+      }
       case "windup":
         scene.anim.hero.skill = { id: e.skill, at: scene.now, phase: "windup", simAt: e.t, simEnd: e.at };
         break;
@@ -489,6 +494,8 @@ function skillPose(s: FighterAnim["skill"], battle: Battle, t: number): Pose["sk
   // The wind-up follows battle time, so it holds still through a freeze and ends as the hit lands.
   // It reaches its last wind-up frame on the step before the hit, where a combo pause holds it.
   if (s.phase === "windup") {
+    // Safety net: a wind-up whose hit never came (e.g. the fight ended) lets go shortly after.
+    if (battle.time > s.simEnd + 0.3) return undefined;
     const span = s.simEnd - s.simAt - TICK;
     return { id: s.id, phase: s.phase, p: span <= 1e-9 || battle.time >= s.simEnd - TICK - 1e-9 ? 1 : Math.min(1, (battle.time - s.simAt) / span) };
   }

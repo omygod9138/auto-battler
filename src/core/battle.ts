@@ -82,6 +82,8 @@ export class Battle {
   private cds = new Map<SkillId, number>();
   /** When the hero last hit (swing or skill); skills wait SKILL_RECOVERY after it too. */
   private lastHit = -99;
+  /** Whether the wound-up skill's hit will be dodged, rolled when it starts so a doomed hit never announces a combo. */
+  private nextDodge: boolean | null = null;
   private poison: Dot[] = [];
   private burn: Dot[] = [];
   private secondWindUsed = false;
@@ -153,7 +155,8 @@ export class Battle {
   private tickStatuses(): void {
     for (const f of [this.hero, this.mob]) {
       f.stun = Math.max(0, f.stun - TICK);
-      f.root = Math.max(0, f.root - TICK);
+      // A root waits out a knockback slide, so "immobilized after the kick" starts once it lands.
+      if (f.push === 0) f.root = Math.max(0, f.root - TICK);
       f.vuln = Math.max(0, f.vuln - TICK);
       if (f.push !== 0) {
         const step = Math.sign(f.push) * Math.min(Math.abs(f.push), Math.max(PUSH_MIN_STEP, Math.abs(f.push) * PUSH_SHARE));
@@ -265,6 +268,7 @@ export class Battle {
     if (ready("charge") && bashReady && !inRange && dist <= N.charge(this.lv("charge")).range && this.mob.push === 0) {
       this.cds.set("charge", this.cooldown("charge"));
       this.dashing = true;
+      this.rollDodge();
       // The dash is Charge's wind-up; announce roughly when it will hit.
       const ticks = Math.ceil((dist - h.s.range) / (DASH_SPEED * TICK) - 1e-9);
       this.emit({ t: this.time, type: "windup", target: "mob", skill: "charge", at: this.time + ticks * TICK, combo: this.peekCombo("charge")?.label });
@@ -312,7 +316,13 @@ export class Battle {
   private windUp(skill: SkillId): void {
     const at = this.time + (WINDUP[skill] ?? WINDUP_DEFAULT);
     this.pending = { skill, at };
+    this.rollDodge();
     this.emit({ t: this.time, type: "windup", target: "mob", skill, at, combo: this.peekCombo(skill)?.label });
+  }
+
+  /** Decide now whether the coming skill hit is dodged. Spells can't be dodged. */
+  private rollDodge(): void {
+    this.nextDodge = !this.hero.s.magic && this.rng.next() < this.mob.s.dodge;
   }
 
   /** The combo label the next step() will land, if any, so the view can pause right before the hit. */
@@ -354,6 +364,7 @@ export class Battle {
         // and the mob is slammed into the wall.
         const slide = Math.min(n.push, ARENA.length - this.mob.x);
         this.mob.push += slide;
+        this.mob.root = Math.max(this.mob.root, n.root);
         h.push -= n.push - slide;
         if (slide < n.push - 1e-9) {
           this.mob.vuln = WALL_SLAM_TIME;
@@ -372,13 +383,15 @@ export class Battle {
 
   /** The combo a skill would complete if it landed now. */
   private peekCombo(skill: SkillId): Combo | undefined {
+    if (this.nextDodge) return undefined;
     return COMBOS.find(({ pair }) => pair[0] === this.lastSkill && pair[1] === skill);
   }
 
   /** Record an attack skill and return the combo it completes, if any. */
   private combo(skill: SkillId): Combo | undefined {
     const c = this.peekCombo(skill);
-    this.lastSkill = skill;
+    // A dodged skill never lands, so it can't finish a combo or start the next one.
+    this.lastSkill = this.nextDodge ? null : skill;
     if (c) this.emit({ t: this.time, type: "status", target: "hero", label: c.label });
     return c;
   }
@@ -430,7 +443,9 @@ export class Battle {
     const h = this.hero;
     const m = this.mob;
     this.lastHit = this.time;
-    if (!h.s.magic && this.rng.next() < m.s.dodge) {
+    const dodged = this.nextDodge ?? (!h.s.magic && this.rng.next() < m.s.dodge);
+    this.nextDodge = null;
+    if (dodged) {
       this.emit({ t: this.time, type: "dodge", target: "mob" });
       return false;
     }
@@ -444,6 +459,7 @@ export class Battle {
 
   /** Spells never miss and ignore armor. */
   private spell(raw: number, fx: FxKind, label: string, skill?: SkillId): void {
+    this.nextDodge = null;
     this.lastHit = this.time;
     const crit = this.rng.next() < this.hero.s.crit;
     this.dealToMob(raw * this.hero.s.spellPower * (crit ? this.hero.s.critMult : 1) * this.execute(), crit, fx, label, skill);

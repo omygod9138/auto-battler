@@ -130,7 +130,7 @@ function mobPanel(s: RunState): string {
     <h3>Next: round ${s.round}${def.boss ? " · BOSS" : ""}</h3>
     <div class="mob-row"><img class="portrait mob-portrait" src="${portrait(def.id)}" alt="" width="84" height="84">
       <div><b>${def.name}</b><br><span class="muted">${def.trait}</span><br>
-      ❤️ ${stats.maxHp} · ⚔️ ${stats.dmg.toFixed(0)} · 📏 ${stats.range}${stats.armor ? ` · 🛡️ ${stats.armor}` : ""}</div>
+      ❤️ ${stats.maxHp} · ⚔️ ${stats.dmg.toFixed(0)} · 📏 ${stats.range}${stats.armor ? ` · 🛡️ ${stats.armor}` : ""}${stats.dodge ? ` · 🍃 Dodge ${Math.round(stats.dodge * 100)}%` : ""}</div>
     </div>
   </section>`;
 }
@@ -262,6 +262,13 @@ app.addEventListener("click", (e) => {
   }
   render();
 });
+
+// Build stamp in the corner, outside #app so every screen keeps it.
+const stamp = document.createElement("div");
+stamp.className = "build-stamp";
+stamp.textContent = `${__BUILD_COMMIT__} · ${__BUILD_TIME__.slice(0, 16).replace("T", " ")} UTC${import.meta.env.DEV ? " · dev" : ""}`;
+stamp.title = "Build: commit and build time";
+document.body.append(stamp);
 
 // Missing art just means the procedural characters are used.
 if (new URLSearchParams(location.search).has("sandbox")) loadSprites().finally(() => startSandbox(app));

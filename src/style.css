@@ -132,3 +132,5 @@ h2.loss { color: var(--bad); }
 .sb-log { max-height: 220px; overflow: auto; margin: 0; padding-left: 0; list-style: none; font-size: 0.9em; }
 .sb-log .combo { color: #ffd34d; }
 @media (max-width: 640px) { .sb-bottom { grid-template-columns: 1fr; } }
+
+.build-stamp { position: fixed; right: 8px; bottom: 6px; font-size: 11px; opacity: 0.55; pointer-events: none; font-family: ui-monospace, monospace; }

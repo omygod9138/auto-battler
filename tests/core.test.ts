@@ -160,6 +160,8 @@ describe("battle", () => {
     while (b.mob.push !== 0) b.step();
     // The dummy never walks, so all of its movement is the knockback.
     expect(b.mob.x - x0).toBeCloseTo(SKILL_NUM.spartanKick(1).push, 5);
+    // Then it's immobilized for 1s from where it landed.
+    expect(b.mob.root).toBeCloseTo(SKILL_NUM.spartanKick(1).root, 5);
     let stun = 0;
     for (let i = 0; i < 100 && !stun; i++) {
       const before = b.events.length;
@@ -319,6 +321,42 @@ describe("battle", () => {
       if (e.type !== "damage" || !e.skill) continue;
       expect(b.events.some((w) => w.type === "windup" && w.skill === e.skill && w.t < e.t)).toBe(true);
     }
+  });
+
+  it("a kicked mob can't walk for 1s after it lands", () => {
+    const walker = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 2 });
+    const b = new Battle(CLASSES.warrior.base, { spartanKick: 1 }, walker, 1);
+    b.mob.x = 12;
+    for (let i = 0; i < 600 && !b.events.some((e) => e.type === "damage" && e.skill === "spartanKick"); i++) b.step();
+    while (b.mob.push !== 0) b.step();
+    const landed = b.mob.x;
+    for (let i = 0; i < 19; i++) b.step();
+    expect(b.mob.x).toBe(landed);
+    for (let i = 0; i < 5; i++) b.step();
+    expect(b.mob.x).toBeLessThan(landed);
+  });
+
+  it.each([1, 2, 3])("a dodged hit never announces or lands a combo (seed %i)", (seed) => {
+    const dodgy = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0, dodge: 0.5 });
+    const b = new Battle(CLASSES.warrior.base, { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 2 }, dodgy, seed);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    let combos = 0;
+    let dodgedSkills = 0;
+    for (const [i, e] of b.events.entries()) {
+      if (e.type === "windup" && e.combo) {
+        // The skill this wind-up announced must actually hit (unless the fight ends first).
+        const hit = b.events.slice(i + 1).find((x) => (x.type === "damage" && x.target === "mob") || (x.type === "dodge" && x.target === "mob"));
+        if (hit) expect(hit.type).toBe("damage");
+      }
+      if (e.type === "status" && e.label.startsWith("Combo")) {
+        combos++;
+        const next = b.events.slice(i + 1).find((x) => (x.type === "damage" && x.target === "mob") || (x.type === "dodge" && x.target === "mob"));
+        expect(next?.type).toBe("damage");
+      }
+      if (e.type === "dodge" && e.target === "mob") dodgedSkills++;
+    }
+    expect(combos).toBeGreaterThan(2);
+    expect(dodgedSkills).toBeGreaterThan(2);
   });
 
   it("no combo from a single skill", () => {
