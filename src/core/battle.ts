@@ -1,5 +1,5 @@
 import { Rng } from "./rng";
-import { SKILL_NUM as N, type SkillId, type SkillLevels } from "./skills";
+import { COMBOS, COMBO_WINDOW, SKILL_NUM as N, type Combo, type SkillId, type SkillLevels } from "./skills";
 import type { Stats } from "./stats";
 
 export const TICK = 1 / 20;
@@ -48,6 +48,9 @@ export class Battle {
   private rng: Rng;
   private lv: (id: SkillId) => number;
   private hits = 0;
+  /** Recent attack skills, for combos. */
+  private chain: SkillId[] = [];
+  private chainAt = -99;
   private cds = new Map<SkillId, number>();
   private poison: Dot[] = [];
   private burn: Dot[] = [];
@@ -209,12 +212,24 @@ export class Battle {
       this.cds.set("headshot", this.cooldown("headshot"));
       this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!", "headshot");
     }
-    if (ready("shieldBash") && inRange) {
+    // Hold the bash until Charge has opened the fight, so the two can combo.
+    const awaitCharge = this.lv("charge") > 0 && this.hits === 0;
+    if (ready("shieldBash") && inRange && !awaitCharge) {
       const n = N.shieldBash(this.lv("shieldBash"));
       this.cds.set("shieldBash", this.cooldown("shieldBash"));
-      this.physical(h.s.dmg * n.mult, "bash", "Bash!", "shieldBash");
-      this.mob.stun = Math.max(this.mob.stun, n.stun);
+      const c = this.combo("shieldBash");
+      this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Bash!", "shieldBash");
+      this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
     }
+  }
+
+  /** Record an attack skill and return the combo it completes, if any. */
+  private combo(skill: SkillId): Combo | undefined {
+    this.chain = this.time - this.chainAt <= COMBO_WINDOW ? [...this.chain, skill] : [skill];
+    this.chainAt = this.time;
+    const c = COMBOS.find(({ seq }) => seq.length <= this.chain.length && seq.every((id, i) => this.chain[this.chain.length - seq.length + i] === id));
+    if (c) this.emit({ t: this.time, type: "status", target: "hero", label: c.label });
+    return c;
   }
 
   private addBurn(dps: number, dur: number): void {
@@ -243,6 +258,8 @@ export class Battle {
         skill = "heavyStrike";
       }
     }
+    const c = skill && this.combo(skill);
+    if (c) mult *= c.dmgMult ?? 1;
     const fx: FxKind = h.s.magic ? "bolt" : h.s.range > 2 ? "arrow" : "slash";
     const landed = this.physical(h.s.dmg * mult, fx, label, skill);
     if (!landed) return;

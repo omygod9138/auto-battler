@@ -122,6 +122,27 @@ describe("battle", () => {
     expect([...skills].sort()).toEqual(["charge", "heavyStrike", "shieldBash"]);
   });
 
+  it("charge -> shield bash -> heavy strike combos", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, shieldBash: 1, heavyStrike: 1 }, dummy, 1);
+    let bashStun = 0;
+    for (let i = 0; i < 200 && !bashStun; i++) {
+      b.step();
+      if (b.events.some((e) => e.type === "damage" && e.skill === "shieldBash")) bashStun = b.mob.stun;
+    }
+    // Lv1 bash stuns 1.2s; the combo doubles it (one tick already elapsed is fine).
+    expect(bashStun).toBeGreaterThan(2.3);
+    for (let i = 0; i < 200; i++) b.step();
+    const combos = b.events.flatMap((e) => (e.type === "status" ? [e.label] : []));
+    expect(combos).toContain("Combo! Stun ×2");
+    expect(combos).toContain("Combo! +33%");
+  });
+
+  it("no combo without the opener", () => {
+    const b = new Battle(CLASSES.warrior.base, { shieldBash: 1, heavyStrike: 1 }, dummy, 1);
+    for (let i = 0; i < 400; i++) b.step();
+    expect(b.events.some((e) => e.type === "status" && e.label.startsWith("Combo"))).toBe(false);
+  });
+
   it("times out as a loss", () => {
     expect(new Battle(CLASSES.warrior.base, {}, stats({ maxHp: 1e9, dmg: 0, interval: 99, range: 1, speed: 1 }), 1).runToEnd()).toBe("loss");
   });

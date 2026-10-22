@@ -85,6 +85,8 @@ button.primary { background: var(--accent); color: #1b1f24; font-weight: 700; pa
 .tag.active { color: var(--magic); }
 .tag.proc { color: var(--accent); }
 .tag .cls { color: var(--accent); font-weight: 700; }
+.tag .cat { color: var(--text); }
+.skill-group { display: grid; gap: 4px; margin-bottom: 8px; }
 .lv { color: var(--good); font-weight: 700; font-size: 0.8rem; }
 .best { color: var(--accent); font-weight: 700; }
 
