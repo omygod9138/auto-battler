@@ -19,6 +19,8 @@ const STANDOFF = 16;
 const WALL_X = W - PAD_R + STANDOFF + 30;
 /** Real seconds the whole scene freezes when a combo lands. */
 const COMBO_PAUSE = 1.2;
+/** No new freeze until this many real seconds after the last one ended, so a combo chain pauses once. */
+const COMBO_PAUSE_GAP = 4;
 /** Scene seconds between the combo hit and the freeze, so its impact is on screen. */
 const COMBO_PAUSE_DELAY = 0.08;
 /** Seconds a skill clip takes to play from the moment its hit lands. */
@@ -102,6 +104,8 @@ class Scene {
   freeze = 0;
   /** Scene seconds until a pending freeze starts, or -1. */
   freezeIn = -1;
+  /** Real time the last freeze ended. */
+  freezeEnded = -99;
   /** When the mob was last slammed into the wall, for cracks. */
   wallHit = -9;
   /** A large centred callout, for combos. */
@@ -217,7 +221,7 @@ export function playBattle(
         if (e.label.startsWith("Combo")) {
           // Only combos stop the action: a solo skill never pauses.
           scene.banner = { text: e.label, born: scene.real };
-          scene.freezeIn = COMBO_PAUSE_DELAY;
+          if (scene.freeze <= 0 && scene.real - scene.freezeEnded > COMBO_PAUSE_GAP) scene.freezeIn = COMBO_PAUSE_DELAY;
           scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir });
           break;
         }
@@ -244,7 +248,10 @@ export function playBattle(
     last = nowMs;
     scene.real += dt;
     const frozen = scene.freeze > 0;
-    if (frozen) scene.freeze -= dt;
+    if (frozen) {
+      scene.freeze -= dt;
+      if (scene.freeze <= 0) scene.freezeEnded = scene.real;
+    }
     else {
       scene.now += dt;
       acc += dt * speed();
