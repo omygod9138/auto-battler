@@ -169,6 +169,18 @@ describe("battle", () => {
     expect(b.events.some((e) => e.type === "status" && e.label === "Combo! Stun +3s")).toBe(true);
   });
 
+  it.each([1, 2, 3])("every charge is followed by a shield bash combo (lv %i)", (lv) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { charge: lv, spartanKick: lv, shieldBash: lv, heavyStrike: lv }, wall, 1);
+    // The fight drifts into the far wall; kicks must still open a gap there.
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    const count = (pred: (e: (typeof b.events)[number]) => boolean) => b.events.filter(pred).length;
+    const charges = count((e) => e.type === "damage" && e.skill === "charge");
+    expect(charges).toBeGreaterThan(4);
+    expect(count((e) => e.type === "status" && e.label === "Combo! Stun ×2")).toBe(charges);
+    expect(count((e) => e.type === "status" && e.label === "Combo! Stun +3s")).toBe(charges - 1);
+  });
+
   it("no combo without the opener", () => {
     const b = new Battle(CLASSES.warrior.base, { shieldBash: 1, heavyStrike: 1 }, dummy, 1);
     for (let i = 0; i < 400; i++) b.step();

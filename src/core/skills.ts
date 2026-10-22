@@ -61,7 +61,8 @@ export const SKILL_NUM = {
   berserk: (lv: number) => 0.4 * lv,
   thorns: (lv: number) => 0.15 + 0.15 * lv,
   secondWind: (lv: number) => 0.25 + 0.15 * lv,
-  charge: (lv: number) => ({ cd: 10 - lv, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
+  // Same cooldown as Shield Bash, so every Charge can be followed by a Bash.
+  charge: (lv: number) => ({ cd: 6, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
   spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 2 }),
   multishot: (lv: number) => ({ arrows: lv, mult: 0.5 }),
   poison: (lv: number) => ({ dps: 1 + 1.5 * lv, dur: 4, maxStacks: 3 + 2 * lv }),
@@ -95,7 +96,7 @@ export const SKILLS: Record<SkillId, SkillDef> = {
   secondWind: { id: "secondWind", name: "Second Wind", icon: "🌬️", cls: "warrior", kind: "proc", cat: "defense",
     desc: (lv) => `Once per fight, at 30% HP heal ${pct(S.secondWind(lv))}.` },
   charge: { id: "charge", name: "Charge", icon: "🐂", cls: "warrior", kind: "proc", cat: "attack",
-    desc: (lv) => `Every ${S.charge(lv).cd}s: from up to ${S.charge(lv).range}m away, dash in for ×${S.charge(lv).mult} and stun ${S.charge(lv).stun}s.` },
+    desc: (lv) => `Every ${S.charge(lv).cd}s: from up to ${S.charge(lv).range}m away, dash in for ×${S.charge(lv).mult} and stun ${S.charge(lv).stun}s. Combo: Shield Bash next, stun ×2.` },
   spartanKick: { id: "spartanKick", name: "Spartan Kick", icon: "🦶", cls: "warrior", kind: "active", cat: "attack",
     desc: (lv) => `Every ${S.spartanKick(lv).cd}s: kick for ×${num(S.spartanKick(lv).mult)} and knock the mob back ${S.spartanKick(lv).push}m. Combo: Charge next, stun +3s.` },
 

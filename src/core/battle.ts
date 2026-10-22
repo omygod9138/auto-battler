@@ -56,6 +56,7 @@ export class Battle {
   private hits = 0;
   /** Charge has landed at least once, so held skills may follow it. */
   private charged = false;
+  private chargedAt = -99;
   /** The hero is mid Charge dash. */
   dashing = false;
   /** Recent attack skills, for combos. */
@@ -87,8 +88,11 @@ export class Battle {
     for (const id of ["shieldBash", "headshot", "fireball", "frostNova", "meteor", "spartanKick"] as const) {
       if (this.lv(id)) this.cds.set(id, this.cooldown(id) / 2);
     }
-    // Charge opens the fight.
-    if (this.lv("charge")) this.cds.set("charge", 0);
+    // Charge opens the fight, with Shield Bash ready to follow it.
+    if (this.lv("charge")) {
+      this.cds.set("charge", 0);
+      if (this.lv("shieldBash")) this.cds.set("shieldBash", 0);
+    }
   }
 
   /** Active skills with seconds left and full cooldown, for the HUD. */
@@ -232,26 +236,35 @@ export class Battle {
       this.cds.set("headshot", this.cooldown("headshot"));
       this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!", "headshot");
     }
-    if (ready("charge") && !inRange && dist <= N.charge(this.lv("charge")).range && this.mob.push === 0) {
+    // Charge only when Shield Bash can follow it.
+    const bashReady = !this.lv("shieldBash") || ready("shieldBash");
+    if (ready("charge") && bashReady && !inRange && dist <= N.charge(this.lv("charge")).range && this.mob.push === 0) {
       this.cds.set("charge", this.cooldown("charge"));
       this.dashing = true;
       return;
     }
-    // Hold the bash until Charge has opened the fight, so the two can combo.
+    // Hold the bash until Charge has opened the fight, so the two can combo. With Spartan Kick
+    // Charge comes back every cycle, so the bash is saved for right after each Charge.
     const awaitCharge = this.lv("charge") > 0 && !this.charged;
-    if (ready("shieldBash") && inRange && !awaitCharge) {
+    const saveBash = this.lv("charge") > 0 && this.lv("spartanKick") > 0 && this.time - this.chargedAt > COMBO_WINDOW;
+    if (ready("shieldBash") && inRange && !awaitCharge && !saveBash) {
       const n = N.shieldBash(this.lv("shieldBash"));
       this.cds.set("shieldBash", this.cooldown("shieldBash"));
       const c = this.combo("shieldBash");
       this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Bash!", "shieldBash");
       this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
     }
-    // Kick only when Charge can follow it, so the knockback sets up the combo.
-    if (ready("spartanKick") && dist <= h.s.range + 1e-6 && !awaitCharge && (!this.lv("charge") || ready("charge"))) {
+    // Kick only when Charge (and the Bash after it) can follow, so the knockback sets up the combo.
+    if (ready("spartanKick") && dist <= h.s.range + 1e-6 && !awaitCharge && (!this.lv("charge") || (ready("charge") && bashReady))) {
       const n = N.spartanKick(this.lv("spartanKick"));
       this.cds.set("spartanKick", this.cooldown("spartanKick"));
       this.combo("spartanKick");
-      if (this.physical(h.s.dmg * n.mult, "bash", "Kick!", "spartanKick")) this.mob.push += n.push;
+      if (this.physical(h.s.dmg * n.mult, "bash", "Kick!", "spartanKick")) {
+        // Against the far wall the kicker bounces back instead, so the gap still opens.
+        const slide = Math.min(n.push, ARENA.length - this.mob.x);
+        this.mob.push += slide;
+        h.push -= n.push - slide;
+      }
     }
   }
 
@@ -263,6 +276,7 @@ export class Battle {
     if (gap > DASH_SPEED * TICK) return;
     this.dashing = false;
     this.charged = true;
+    this.chargedAt = this.time;
     const n = N.charge(this.lv("charge"));
     const c = this.combo("charge");
     if (this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Charge!", "charge")) {
