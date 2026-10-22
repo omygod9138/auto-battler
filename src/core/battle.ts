@@ -153,7 +153,8 @@ export class Battle {
   private tickStatuses(): void {
     for (const f of [this.hero, this.mob]) {
       f.stun = Math.max(0, f.stun - TICK);
-      f.root = Math.max(0, f.root - TICK);
+      // A root waits out a knockback slide, so "immobilized after the kick" starts once it lands.
+      if (f.push === 0) f.root = Math.max(0, f.root - TICK);
       f.vuln = Math.max(0, f.vuln - TICK);
       if (f.push !== 0) {
         const step = Math.sign(f.push) * Math.min(Math.abs(f.push), Math.max(PUSH_MIN_STEP, Math.abs(f.push) * PUSH_SHARE));
@@ -354,6 +355,7 @@ export class Battle {
         // and the mob is slammed into the wall.
         const slide = Math.min(n.push, ARENA.length - this.mob.x);
         this.mob.push += slide;
+        this.mob.root = Math.max(this.mob.root, n.root);
         h.push -= n.push - slide;
         if (slide < n.push - 1e-9) {
           this.mob.vuln = WALL_SLAM_TIME;
