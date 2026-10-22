@@ -216,7 +216,7 @@ export function playBattle(
         }
         break;
       case "dodge":
-        scene.floaters.push({ born: scene.now, side: target, text: "miss", color: "#b9c2cc", size: 15, dx });
+        scene.floaters.push({ born: scene.now, side: target, text: "Dodge!", color: "#b9c2cc", size: 15, dx });
         scene.anim[target].lunge = -9;
         scene.add({ kind: "ring", dur: 0.25, x, y, color: "rgba(200,220,255,0.6)", size: 26, dir });
         break;
