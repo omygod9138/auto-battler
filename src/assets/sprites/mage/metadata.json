@@ -1,0 +1,72 @@
+{
+  "group_id": "1d493d83-040e-498e-8dda-34fd9c6baf11",
+  "states": [
+    {
+      "character": {
+        "id": "79a5b975-4d9a-4964-8bb5-3c81d82e4efc",
+        "name": "Idle",
+        "prompt": "Settings\n\nCanvas: 64x64\nView: low top-down\nDirection: east (facing right)\nOutline: single color black\nShading: basic\nDetail: medium\nBackground: transparent\nCharacter description chibi battle mage, 3 heads tall, slim build, deep blue hooded robe with gold trim and glowing cyan arcane runes on the hem, short crimson mantle over the shoulders, brown leather belt with a small hourglass charm, dark boots, pale skin, glowing cyan eyes under the hood, tall wooden staff in the right hand topped with a floating orange fire crystal, faint blue mana glow around the left hand, side view facing right, full body, centered, feet on the bottom of the canvas\n\nAnimation prompts (same settings, east)\n\nidle: breathing, robe sways, staff crystal flickers\nwalk: calm stride forward, robe and mantle swaying\nattack: pull staff back, then thrust it forward releasing a small arcane bolt\nfireball: draw staff back while a fireball grows at the crystal, then swing forward and hurl it right\nmeteor: raise staff high with both hands, look up, then slam the staff down toward the enemy\nstatic charge: crackling blue lightning wraps the left hand, then thrust palm forward\nfrost nova: crouch, then slam the staff into the ground, icy ring bursting outward\nmana shield: raise left hand, translucent blue bubble forms around the body\nhurt: recoil backward, hood flaps, crystal dims\ndeath: drop staff and collapse backward, crystal goes dark\nKeep consistent across all frames same palette (deep blue, gold, crimson, cyan glow, orange fire), same proportions, same staff, no extra props, no background, no text",
+        "size": {
+          "width": 64,
+          "height": 64
+        },
+        "template_id": "mannequin",
+        "directions": 8,
+        "view": "side",
+        "created_at": "2026-10-22T10:03:51.786196+00:00"
+      },
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "south": "Idle/rotations/south.png",
+          "south-east": "Idle/rotations/south-east.png",
+          "east": "Idle/rotations/east.png",
+          "north-east": "Idle/rotations/north-east.png",
+          "north": "Idle/rotations/north.png",
+          "north-west": "Idle/rotations/north-west.png",
+          "west": "Idle/rotations/west.png",
+          "south-west": "Idle/rotations/south-west.png"
+        },
+        "animations": {
+          "meteor_raise_staff_high_with_both_hands_look_up_th": {
+            "south": [
+              "Idle/animations/meteor_raise_staff_high_with_both_hands_look_up_th/south/frame_000.png",
+              "Idle/animations/meteor_raise_staff_high_with_both_hands_look_up_th/south/frame_001.png",
+              "Idle/animations/meteor_raise_staff_high_with_both_hands_look_up_th/south/frame_002.png",
+              "Idle/animations/meteor_raise_staff_high_with_both_hands_look_up_th/south/frame_003.png",
+              "Idle/animations/meteor_raise_staff_high_with_both_hands_look_up_th/south/frame_004.png",
+              "Idle/animations/meteor_raise_staff_high_with_both_hands_look_up_th/south/frame_005.png",
+              "Idle/animations/meteor_raise_staff_high_with_both_hands_look_up_th/south/frame_006.png",
+              "Idle/animations/meteor_raise_staff_high_with_both_hands_look_up_th/south/frame_007.png",
+              "Idle/animations/meteor_raise_staff_high_with_both_hands_look_up_th/south/frame_008.png"
+            ]
+          },
+          "Fireball": {
+            "east": [
+              "Idle/animations/Fireball/east/frame_000.png",
+              "Idle/animations/Fireball/east/frame_001.png",
+              "Idle/animations/Fireball/east/frame_002.png",
+              "Idle/animations/Fireball/east/frame_003.png",
+              "Idle/animations/Fireball/east/frame_004.png",
+              "Idle/animations/Fireball/east/frame_005.png"
+            ]
+          },
+          "Walking": {
+            "east": [
+              "Idle/animations/Walking/east/frame_000.png",
+              "Idle/animations/Walking/east/frame_001.png",
+              "Idle/animations/Walking/east/frame_002.png",
+              "Idle/animations/Walking/east/frame_003.png",
+              "Idle/animations/Walking/east/frame_004.png",
+              "Idle/animations/Walking/east/frame_005.png",
+              "Idle/animations/Walking/east/frame_006.png",
+              "Idle/animations/Walking/east/frame_007.png"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "export_version": "3.1",
+  "export_date": "2026-10-22T11:25:07.865414"
+}
