@@ -1,3 +1,4 @@
+import type { SkillId } from "../core/skills";
 import { sprite, type Clip, type SpriteSet } from "./sprites";
 
 // Procedural, rigged characters drawn with canvas paths. Every character is drawn
@@ -18,6 +19,8 @@ export interface Pose {
   hurt: number;
   /** Death progress 0..1, when dying. */
   death?: number;
+  /** A skill hit in progress, 0..1, played from its own clip when the art has one. */
+  skill?: { id: SkillId; p: number };
 }
 
 export const IDLE: Pose = { t: 0, walk: 0, moving: 0, attack: -1, hurt: -1 };
@@ -136,6 +139,8 @@ function drawSprite(ctx: CanvasRenderingContext2D, art: SpriteSet, pose: Pose): 
   let pick: [Clip, HTMLImageElement] | undefined;
   let hop = 0;
   if (pose.death !== undefined) pick = at(anims.death, Math.floor(pose.death * (anims.death?.frames.length ?? 0)));
+  const skillClip = pose.skill && art.skills[pose.skill.id];
+  if (!pick && skillClip) pick = at(skillClip, Math.floor(pose.skill!.p * skillClip.frames.length));
   if (!pick && anims.attack) {
     const n = anims.attack.frames.length;
     const strike = Math.round(n * STRIKE);

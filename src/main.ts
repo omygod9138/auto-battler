@@ -1,5 +1,5 @@
 import type { Battle } from "./core/battle";
-import { MAX_LEVEL, SKILLS, type SkillId, type SkillKind } from "./core/skills";
+import { MAX_LEVEL, SKILLS, type SkillCat, type SkillId, type SkillKind } from "./core/skills";
 import { CLASSES, type ClassId, type Stats } from "./core/stats";
 import {
   chooseSkill,
@@ -42,6 +42,7 @@ function saveBest(cls: ClassId, wins: number): void {
 }
 
 const KIND_LABEL: Record<SkillKind, string> = { passive: "Passive", proc: "On hit", active: "Active" };
+const CAT_LABEL: Record<SkillCat, string> = { attack: "⚔️ Attack", defense: "🛡️ Defense", passive: "✨ Passive" };
 
 function render(): void {
   if (!run) return renderTitle();
@@ -101,14 +102,23 @@ function heroPanel(s: RunState): string {
   if (st.lifesteal) rows.push(["🧛 Lifesteal", `${Math.round(st.lifesteal * 100)}%`]);
   if (st.regen) rows.push(["🌿 Regen", `${(st.regen * 100).toFixed(1)}%/s`]);
   if (st.spellPower !== 1) rows.push(["✨ Spell power", `×${st.spellPower.toFixed(2)}`]);
-  const owned = (Object.entries(s.levels) as [SkillId, number][])
-    .map(([id, lv]) => `<span class="chip" title="${SKILLS[id].desc(lv)}">${SKILLS[id].icon} ${SKILLS[id].name} <b>${lv}</b></span>`)
+  const chip = ([id, lv]: [SkillId, number]) =>
+    `<span class="chip" title="${SKILLS[id].desc(lv)}">${SKILLS[id].icon} ${SKILLS[id].name} <b>${lv}</b></span>`;
+  const learned = Object.entries(s.levels) as [SkillId, number][];
+  // Class skills grouped by category, shared skills last.
+  const groups: [string, [SkillId, number][]][] = [
+    ...(Object.keys(CAT_LABEL) as SkillCat[]).map((c): [string, [SkillId, number][]] => [CAT_LABEL[c], learned.filter(([id]) => SKILLS[id].cat === c)]),
+    ["Shared", learned.filter(([id]) => !SKILLS[id].cat)],
+  ];
+  const owned = groups
+    .filter(([, list]) => list.length)
+    .map(([name, list]) => `<div class="skill-group"><small class="tag">${name}</small><div class="chips">${list.map(chip).join("")}</div></div>`)
     .join("");
   return `<section class="panel hero">
     <div class="hero-head"><img class="portrait small" src="${portrait(s.cls)}" alt="" width="56" height="56"><h3>Your ${CLASSES[s.cls].name}</h3></div>
     <dl class="stats">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
     <h3>Skills</h3>
-    <div class="chips">${owned || "<span class='muted'>None yet.</span>"}</div>
+    ${owned || "<span class='muted'>None yet.</span>"}
   </section>`;
 }
 
@@ -131,7 +141,7 @@ function renderChoose(s: RunState): void {
       return `<button class="card skill ${k.cls === "any" ? "shared" : ""}" data-action="pick" data-id="${id}">
         <div class="big">${k.icon}</div>
         <b>${k.name}</b>
-        <small class="tag ${k.kind}">${KIND_LABEL[k.kind]}${k.cls === "any" ? " · Shared" : ""}</small>
+        <small class="tag ${k.kind}">${k.cat ? `<span class="cat">${CAT_LABEL[k.cat]}</span> · ${KIND_LABEL[k.kind]} · <span class="cls">${CLASSES[k.cls as ClassId].name}</span>` : `${KIND_LABEL[k.kind]} · Shared`}</small>
         <span class="lv">${lv ? `Lv ${lv} → ${lv + 1}` : "New"}${lv + 1 === MAX_LEVEL ? " (max)" : ""}</span>
         <span>${k.desc(lv + 1)}</span>
       </button>`;

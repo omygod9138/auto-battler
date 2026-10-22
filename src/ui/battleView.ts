@@ -1,5 +1,5 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
-import { SKILLS } from "../core/skills";
+import { SKILLS, type SkillId } from "../core/skills";
 import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale } from "./characters";
 
 const W = 880;
@@ -13,6 +13,8 @@ const px = (x: number) => PAD + x * SCALE;
 const CHAR_SCALE = 1.35;
 /** Visual gap so melee fighters stand face to face instead of overlapping. */
 const STANDOFF = 16;
+/** Seconds a skill clip takes to play from the moment its hit lands. */
+const SKILL_ANIM = 0.5;
 const fx = (battle: Battle, side: Side) => px(side === "hero" ? battle.hero.x : battle.mob.x) + (side === "hero" ? -STANDOFF : STANDOFF);
 const height = (id: string) => characterHeight(id) * CHAR_SCALE;
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -72,6 +74,8 @@ interface FighterAnim {
   walk: number;
   moving: number;
   deathAt: number | null;
+  /** The skill behind the latest hit and when it landed. */
+  skill: { id: SkillId; at: number } | null;
 }
 
 /** Real-time (not battle-time) animation state, so idle motion keeps going while paused or after the end. */
@@ -83,8 +87,8 @@ class Scene {
   shake = 0;
   now = 0;
   anim: Record<Side, FighterAnim> = {
-    hero: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null },
-    mob: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null },
+    hero: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null, skill: null },
+    mob: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null, skill: null },
   };
   clouds = Array.from({ length: 6 }, (_, i) => ({ x: i * 170 + rand(0, 80), y: rand(20, 90), s: rand(0.6, 1.3), v: rand(4, 10) }));
   ambient: Particle[] = Array.from({ length: 40 }, () => this.flake(rand(0, H)));
@@ -150,6 +154,7 @@ export function playBattle(
         const attacker: Side = target === "mob" ? "hero" : "mob";
         const big = e.crit || (e.label !== undefined && e.label !== "Zap!");
         scene.anim[target].hurt = scene.now;
+        if (e.skill) scene.anim[attacker].skill = { id: e.skill, at: scene.now };
         if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
           scene.anim[attacker].lunge = scene.now;
           scene.add({ kind: "slash", dur: 0.22, x: x - dir * 10, y, color: e.fx === "claw" ? "#ff9f9f" : "#ffffff", size: big ? 46 : 34, dir });
@@ -363,6 +368,7 @@ function draw(
       windup: windup(battle, side),
       hurt,
       death: death ?? undefined,
+      skill: a.skill && t - a.skill.at < SKILL_ANIM ? { id: a.skill.id, p: (t - a.skill.at) / SKILL_ANIM } : undefined,
     });
     drawFighter(ctx, layer, {
       x, facing, h: heights[side],
