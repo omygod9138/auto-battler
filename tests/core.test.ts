@@ -336,6 +336,29 @@ describe("battle", () => {
     expect(b.mob.x).toBeLessThan(landed);
   });
 
+  it.each([1, 2, 3])("a dodged hit never announces or lands a combo (seed %i)", (seed) => {
+    const dodgy = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0, dodge: 0.5 });
+    const b = new Battle(CLASSES.warrior.base, { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 2 }, dodgy, seed);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    let combos = 0;
+    let dodgedSkills = 0;
+    for (const [i, e] of b.events.entries()) {
+      if (e.type === "windup" && e.combo) {
+        // The skill this wind-up announced must actually hit (unless the fight ends first).
+        const hit = b.events.slice(i + 1).find((x) => (x.type === "damage" && x.target === "mob") || (x.type === "dodge" && x.target === "mob"));
+        if (hit) expect(hit.type).toBe("damage");
+      }
+      if (e.type === "status" && e.label.startsWith("Combo")) {
+        combos++;
+        const next = b.events.slice(i + 1).find((x) => (x.type === "damage" && x.target === "mob") || (x.type === "dodge" && x.target === "mob"));
+        expect(next?.type).toBe("damage");
+      }
+      if (e.type === "dodge" && e.target === "mob") dodgedSkills++;
+    }
+    expect(combos).toBeGreaterThan(2);
+    expect(dodgedSkills).toBeGreaterThan(2);
+  });
+
   it("no combo from a single skill", () => {
     const b = new Battle(CLASSES.warrior.base, { heavyStrike: 1 }, dummy, 1);
     for (let i = 0; i < 400; i++) b.step();
