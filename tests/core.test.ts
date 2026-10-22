@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Battle } from "../src/core/battle";
+import { ARENA, Battle, WALL_SLAM_MULT, WALL_SLAM_TIME } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
 import { MAX_LEVEL, SKILLS, heroStats } from "../src/core/skills";
@@ -179,6 +179,30 @@ describe("battle", () => {
     expect(charges).toBeGreaterThan(4);
     expect(count((e) => e.type === "status" && e.label === "Combo! Stun ×2")).toBe(charges);
     expect(count((e) => e.type === "status" && e.label === "Combo! Stun +3s")).toBe(charges - 1);
+  });
+
+  it("a kick into the far wall slams: +33% damage taken for 5s", () => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { spartanKick: 1 }, wall, 1);
+    b.mob.x = ARENA.length;
+    let slamAt = -1;
+    for (let i = 0; i < 600 && slamAt < 0; i++) {
+      b.step();
+      const e = b.events.find((e) => e.type === "status" && e.label === "Wall Slam!");
+      if (e) slamAt = e.t;
+    }
+    expect(slamAt).toBeGreaterThan(0);
+    expect(b.mob.x).toBe(ARENA.length);
+    for (let i = 0; i < 8 * 20; i++) b.step();
+    const plain = (from: number, to: number) =>
+      b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" && !e.skill && !e.crit && e.t > from && e.t <= to ? [e.amount] : []));
+    const during = plain(slamAt, slamAt + WALL_SLAM_TIME - 0.1);
+    // Before the next kick (7s cooldown) slams again.
+    const after = plain(slamAt + WALL_SLAM_TIME + 0.1, slamAt + 6.9);
+    expect(during.length).toBeGreaterThan(0);
+    expect(after.length).toBeGreaterThan(0);
+    for (const d of during) expect(d).toBeCloseTo(12 * WALL_SLAM_MULT, 5);
+    for (const d of after) expect(d).toBeCloseTo(12, 5);
   });
 
   it("no combo without the opener", () => {

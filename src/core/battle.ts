@@ -19,7 +19,13 @@ export interface Fighter {
   shield: number;
   /** Knockback distance still to slide, signed along x. */
   push: number;
+  /** Seconds left of Wall Slam: takes extra damage. */
+  vuln: number;
 }
+
+/** Wall Slam: a kick into the far wall makes the mob take this much more damage for WALL_SLAM_TIME. */
+export const WALL_SLAM_MULT = 1.33;
+export const WALL_SLAM_TIME = 5;
 
 export type FxKind = "slash" | "arrow" | "bolt" | "fireball" | "frost" | "meteor" | "lightning" | "bash" | "claw" | "spit";
 
@@ -80,8 +86,8 @@ export class Battle {
   ) {
     this.rng = new Rng(seed);
     this.lv = (id) => levels[id] ?? 0;
-    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: ARENA.heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0 };
-    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0 };
+    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: ARENA.heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0, vuln: 0 };
+    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0, vuln: 0 };
     if (this.lv("manaShield")) this.hero.shield = heroStats.maxHp * N.manaShield(this.lv("manaShield")).shield;
     this.snareX = this.lv("snare") ? ARENA.heroStart + heroStats.range + 1.5 : null;
     // Active skills start at half cooldown so the first cast comes early.
@@ -134,6 +140,7 @@ export class Battle {
     for (const f of [this.hero, this.mob]) {
       f.stun = Math.max(0, f.stun - TICK);
       f.root = Math.max(0, f.root - TICK);
+      f.vuln = Math.max(0, f.vuln - TICK);
       if (f.push !== 0) {
         const step = Math.sign(f.push) * Math.min(Math.abs(f.push), PUSH_SPEED * TICK);
         const x = Math.max(0, Math.min(ARENA.length, f.x + step));
@@ -152,6 +159,7 @@ export class Battle {
       list.length = 0;
       list.push(...alive);
       if (total > 0) {
+        total *= this.slam();
         this.mob.hp -= total;
         // Report DoT roughly twice a second so numbers stay readable.
         if (Math.round(this.time * 20) % 10 === 0) this.emit({ t: this.time, type: "dot", target: "mob", amount: total * 10, kind });
@@ -260,10 +268,15 @@ export class Battle {
       this.cds.set("spartanKick", this.cooldown("spartanKick"));
       this.combo("spartanKick");
       if (this.physical(h.s.dmg * n.mult, "bash", "Kick!", "spartanKick")) {
-        // Against the far wall the kicker bounces back instead, so the gap still opens.
+        // Against the far wall the kicker bounces back instead, so the gap still opens,
+        // and the mob is slammed into the wall.
         const slide = Math.min(n.push, ARENA.length - this.mob.x);
         this.mob.push += slide;
         h.push -= n.push - slide;
+        if (slide < n.push - 1e-9) {
+          this.mob.vuln = WALL_SLAM_TIME;
+          this.emit({ t: this.time, type: "status", target: "mob", label: "Wall Slam!" });
+        }
       }
     }
   }
@@ -364,7 +377,12 @@ export class Battle {
     return this.mob.hp < this.mob.s.maxHp * e.below ? e.mult : 1;
   }
 
+  private slam(): number {
+    return this.mob.vuln > 0 ? WALL_SLAM_MULT : 1;
+  }
+
   private dealToMob(dmg: number, crit: boolean, fx: FxKind, label?: string, skill?: SkillId): void {
+    dmg *= this.slam();
     this.mob.hp -= dmg;
     this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label, skill });
     const heal = dmg * (this.hero.s.lifesteal + (this.lv("bloodlust") ? N.bloodlust(this.lv("bloodlust")) : 0));
@@ -398,7 +416,7 @@ export class Battle {
     h.hp -= dmg;
     this.emit({ t: this.time, type: "damage", target: "hero", amount: dmg, crit, fx: m.s.range > 2 ? (m.s.magic ? "fireball" : "spit") : "claw" });
     if (this.lv("thorns") && dmg > 0) {
-      const t = dmg * N.thorns(this.lv("thorns"));
+      const t = dmg * N.thorns(this.lv("thorns")) * this.slam();
       m.hp -= t;
       this.emit({ t: this.time, type: "dot", target: "mob", amount: t, kind: "thorns" });
     }

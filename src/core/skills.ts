@@ -98,7 +98,7 @@ export const SKILLS: Record<SkillId, SkillDef> = {
   charge: { id: "charge", name: "Charge", icon: "🐂", cls: "warrior", kind: "proc", cat: "attack",
     desc: (lv) => `Every ${S.charge(lv).cd}s: from up to ${S.charge(lv).range}m away, dash in for ×${S.charge(lv).mult} and stun ${S.charge(lv).stun}s. Combo: Shield Bash next, stun ×2.` },
   spartanKick: { id: "spartanKick", name: "Spartan Kick", icon: "🦶", cls: "warrior", kind: "active", cat: "attack",
-    desc: (lv) => `Every ${S.spartanKick(lv).cd}s: kick for ×${num(S.spartanKick(lv).mult)} and knock the mob back ${S.spartanKick(lv).push}m. Combo: Charge next, stun +3s.` },
+    desc: (lv) => `Every ${S.spartanKick(lv).cd}s: kick for ×${num(S.spartanKick(lv).mult)} and knock the mob back ${S.spartanKick(lv).push}m. Into the far wall: Wall Slam, +33% damage taken for 5s. Combo: Charge next, stun +3s.` },
 
   multishot: { id: "multishot", name: "Multishot", icon: "🎯", cls: "ranger", kind: "proc", cat: "attack",
     desc: (lv) => `Fire ${S.multishot(lv).arrows} extra arrow(s) at ${pct(S.multishot(lv).mult)} damage.` },

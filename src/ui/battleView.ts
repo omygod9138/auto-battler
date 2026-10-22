@@ -6,13 +6,17 @@ const W = 880;
 const H = 320;
 const GROUND = 240;
 const PAD = 40;
-const SCALE = (W - PAD * 2) / ARENA.length;
+/** Room on the right for the wall, so a mob slammed into it stays fully on screen. */
+const PAD_R = 96;
+const SCALE = (W - PAD - PAD_R) / ARENA.length;
 
 const px = (x: number) => PAD + x * SCALE;
 /** Characters are drawn larger than their rig units. */
 const CHAR_SCALE = 1.35;
 /** Visual gap so melee fighters stand face to face instead of overlapping. */
 const STANDOFF = 16;
+/** Left face of the far wall: just behind a mob standing at the arena's end. */
+const WALL_X = W - PAD_R + STANDOFF + 30;
 /** Seconds a skill clip takes to play from the moment its hit lands. */
 const SKILL_ANIM = 0.5;
 const fx = (battle: Battle, side: Side) => px(side === "hero" ? battle.hero.x : battle.mob.x) + (side === "hero" ? -STANDOFF : STANDOFF);
@@ -34,6 +38,8 @@ interface Floater {
   color: string;
   size: number;
   dx: number;
+  /** Extra height, to stack callouts that land together. */
+  dy?: number;
 }
 
 interface Shot {
@@ -88,6 +94,8 @@ class Scene {
   now = 0;
   /** Real seconds the sim stays frozen, so big hits land with weight. */
   hitstop = 0;
+  /** When the mob was last slammed into the wall, for cracks. */
+  wallHit = -9;
   /** A large centred callout, for combos. */
   banner: { text: string; born: number } | null = null;
   anim: Record<Side, FighterAnim> = {
@@ -203,6 +211,14 @@ export function playBattle(
           scene.banner = { text: e.label, born: scene.now };
           scene.hitstop = Math.max(scene.hitstop, 0.2);
           scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir });
+          break;
+        }
+        if (e.label === "Wall Slam!") {
+          scene.wallHit = scene.now;
+          scene.shake = Math.max(scene.shake, 12);
+          scene.hitstop = Math.max(scene.hitstop, 0.15);
+          scene.burst(WALL_X, GROUND - 50, 30, "rgba(150,140,130,0.9)", 200, 400, 6);
+          scene.floaters.push({ born: scene.now, side: "mob", text: "🧱 Wall Slam! +33%", color: "#ff9a4d", size: 22, dx: 0, dy: 30 });
           break;
         }
         scene.floaters.push({ born: scene.now, side: target, text: e.label, color: "#c9a7ff", size: 17, dx: 0 });
@@ -402,6 +418,12 @@ function draw(
       aura: enraged ? "rgba(255,60,40,0.35)" : side === "hero" && f.shield > 0 ? "rgba(111,182,255,0.28)" : null,
       t,
     });
+    if (f.vuln > 0) {
+      // Wall Slam debuff marker beside the health bar.
+      ctx.font = "16px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("🧱", x + 42, GROUND - heights[side] - 10);
+    }
     drawBars(ctx, x, heights[side], f.hp / f.s.maxHp, side === "hero" ? "#5fe07a" : "#ff7a6b", f.shield / f.s.maxHp, f.stun > 0, f.root > 0, t, 0);
   }
 
@@ -554,8 +576,45 @@ function drawBackground(ctx: CanvasRenderingContext2D, scene: Scene, t: number, 
     ctx.stroke();
   }
 
+  drawWall(ctx, scene, t);
+
   ctx.fillStyle = "rgba(255,255,255,0.7)";
   for (const f of scene.ambient) ctx.fillRect(f.x, f.y, f.size, f.size);
+}
+
+/** The rock wall at the far end, which Spartan Kick can slam the mob into. */
+function drawWall(ctx: CanvasRenderingContext2D, scene: Scene, t: number): void {
+  const x0 = WALL_X;
+  const top = GROUND - 150;
+  ctx.fillStyle = "#4d4a52";
+  ctx.beginPath();
+  ctx.moveTo(W + 20, top - 10);
+  for (let y = top; y <= GROUND; y += 18) ctx.lineTo(x0 + ((y * 37) % 9) - 4, y);
+  ctx.lineTo(W + 20, GROUND + 4);
+  ctx.fill();
+  ctx.strokeStyle = "#35333a";
+  ctx.lineWidth = 2;
+  for (let y = top + 20; y < GROUND; y += 26) {
+    ctx.beginPath();
+    ctx.moveTo(x0 + 2, y);
+    ctx.lineTo(W, y + 4);
+    ctx.stroke();
+  }
+  const k = (t - scene.wallHit) / 1.5;
+  if (k >= 0 && k < 1) {
+    ctx.globalAlpha = 1 - k;
+    ctx.strokeStyle = "#1c1b1f";
+    ctx.lineWidth = 2.5;
+    const cy = GROUND - 50;
+    for (const [dx, dy] of [[-10, -26], [-6, 22], [8, -18], [10, 30], [-12, 4]]) {
+      ctx.beginPath();
+      ctx.moveTo(x0 + 4, cy);
+      ctx.lineTo(x0 + 4 + dx * 0.5, cy + dy * 0.5);
+      ctx.lineTo(x0 + 4 + dx, cy + dy);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
 }
 
 interface FighterPose {
@@ -759,8 +818,10 @@ function drawFloaters(ctx: CanvasRenderingContext2D, scene: Scene, battle: Battl
     const pop = age < 0.12 ? 0.6 + (age / 0.12) * 0.6 : age < 0.2 ? 1.2 - ((age - 0.12) / 0.08) * 0.2 : 1;
     ctx.globalAlpha = Math.max(0, 1 - Math.max(0, age - 0.5) * 1.6);
     ctx.font = `800 ${Math.round(f.size * pop)}px system-ui, sans-serif`;
-    const x = fx(battle, f.side) + f.dx * (1 + age);
-    const y = GROUND - heights[f.side] - 34 - age * 55;
+    const y = GROUND - heights[f.side] - 34 - (f.dy ?? 0) - age * 55;
+    // Keep text inside the canvas when the fight is at either end.
+    const half = ctx.measureText(f.text).width / 2 + 6;
+    const x = Math.max(half, Math.min(W - half, fx(battle, f.side) + f.dx * (1 + age)));
     ctx.lineWidth = 4;
     ctx.strokeStyle = "rgba(0,0,0,0.7)";
     ctx.strokeText(f.text, x, y);
