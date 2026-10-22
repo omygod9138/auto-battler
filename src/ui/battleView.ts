@@ -1,6 +1,6 @@
-import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
+import { ARENA, TICK, WINDUP, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { SKILLS, type SkillId } from "../core/skills";
-import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale } from "./characters";
+import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Pose } from "./characters";
 
 const W = 880;
 const H = 320;
@@ -17,6 +17,12 @@ const CHAR_SCALE = 1.35;
 const STANDOFF = 16;
 /** Left face of the far wall: just behind a mob standing at the arena's end. */
 const WALL_X = W - PAD_R + STANDOFF + 30;
+/** Real seconds the whole scene freezes when a combo lands. */
+const COMBO_PAUSE = 1.2;
+/** No new freeze until this many real seconds after the last one ended, so a combo chain pauses once. */
+const COMBO_PAUSE_GAP = 4;
+/** Scene seconds between the combo hit and the freeze, so its impact is on screen. */
+const COMBO_PAUSE_DELAY = 0.08;
 /** Seconds a skill clip takes to play from the moment its hit lands. */
 const SKILL_ANIM = 0.5;
 const fx = (battle: Battle, side: Side) => px(side === "hero" ? battle.hero.x : battle.mob.x) + (side === "hero" ? -STANDOFF : STANDOFF);
@@ -81,7 +87,7 @@ interface FighterAnim {
   moving: number;
   deathAt: number | null;
   /** The skill behind the latest hit and when it landed. */
-  skill: { id: SkillId; at: number } | null;
+  skill: { id: SkillId; at: number; phase: "windup" | "strike" | "full"; simAt: number } | null;
 }
 
 /** Real-time (not battle-time) animation state, so idle motion keeps going while paused or after the end. */
@@ -92,8 +98,16 @@ class Scene {
   shots: Shot[] = [];
   shake = 0;
   now = 0;
-  /** Real seconds the sim stays frozen, so big hits land with weight. */
-  hitstop = 0;
+  /** Wall-clock seconds, which keep running through a combo freeze. */
+  real = 0;
+  /** Real seconds left of a combo freeze; nothing moves while it runs. */
+  freeze = 0;
+  /** Scene seconds until a pending freeze starts, or -1. */
+  freezeIn = -1;
+  /** Real time the last freeze ended. */
+  freezeEnded = -99;
+  /** Battle time at which to freeze, for a combo whose wind-up ends then, and the banner to show. */
+  freezeAtSim: { t: number; text: string } | null = null;
   /** When the mob was last slammed into the wall, for cracks. */
   wallHit = -9;
   /** A large centred callout, for combos. */
@@ -143,8 +157,7 @@ export function playBattle(
   const layers = new LayerCache();
   let seen = 0;
   let acc = 0;
-  let start = performance.now();
-  let last = start;
+  let last = performance.now();
   let raf = 0;
   let stopped = false;
   let endedAt: number | null = null;
@@ -166,7 +179,7 @@ export function playBattle(
         const attacker: Side = target === "mob" ? "hero" : "mob";
         const big = e.crit || (e.label !== undefined && e.label !== "Zap!");
         scene.anim[target].hurt = scene.now;
-        if (e.skill) scene.anim[attacker].skill = { id: e.skill, at: scene.now };
+        if (e.skill) scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: WINDUP[e.skill] ? "strike" : "full", simAt: e.t };
         if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
           scene.anim[attacker].lunge = scene.now;
           scene.add({ kind: "slash", dur: 0.22, x: x - dir * 10, y, color: e.fx === "claw" ? "#ff9f9f" : "#ffffff", size: big ? 46 : 34, dir });
@@ -206,17 +219,27 @@ export function playBattle(
         scene.anim[target].lunge = -9;
         scene.add({ kind: "ring", dur: 0.25, x, y, color: "rgba(200,220,255,0.6)", size: 26, dir });
         break;
+      case "windup":
+        scene.anim.hero.skill = { id: e.skill, at: scene.now, phase: "windup", simAt: e.t };
+        // A combo pauses as the wind-up ends: momentum gathered, swing still to come.
+        if (e.combo && scene.freeze <= 0 && scene.real - scene.freezeEnded > COMBO_PAUSE_GAP) {
+          // Freeze before the step that lands the hit (it lands once battle time reaches the wind-up's end).
+          scene.freezeAtSim = { t: e.t + (WINDUP[e.skill] ?? 0) - TICK - 1e-6, text: e.combo };
+        }
+        break;
       case "status":
         if (e.label.startsWith("Combo")) {
-          scene.banner = { text: e.label, born: scene.now };
-          scene.hitstop = Math.max(scene.hitstop, 0.2);
+          // Its wind-up already paused under this banner; don't pop it again.
+          if (scene.banner?.text === e.label && scene.real - scene.banner.born < COMBO_PAUSE + 0.6) break;
+          // Only combos stop the action: a solo skill never pauses.
+          scene.banner = { text: e.label, born: scene.real };
+          if (scene.freeze <= 0 && scene.real - scene.freezeEnded > COMBO_PAUSE_GAP) scene.freezeIn = COMBO_PAUSE_DELAY;
           scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir });
           break;
         }
         if (e.label === "Wall Slam!") {
           scene.wallHit = scene.now;
           scene.shake = Math.max(scene.shake, 12);
-          scene.hitstop = Math.max(scene.hitstop, 0.15);
           scene.burst(WALL_X, GROUND - 50, 30, "rgba(150,140,130,0.9)", 200, 400, 6);
           scene.floaters.push({ born: scene.now, side: "mob", text: "🧱 Wall Slam! +33%", color: "#ff9a4d", size: 22, dx: 0, dy: 30 });
           break;
@@ -235,10 +258,33 @@ export function playBattle(
     if (stopped) return;
     const dt = Math.min(0.05, (nowMs - last) / 1000);
     last = nowMs;
-    scene.now = (nowMs - start) / 1000;
-    if (scene.hitstop > 0) scene.hitstop -= dt;
-    else acc += dt * speed();
+    scene.real += dt;
+    const frozen = scene.freeze > 0;
+    if (frozen) {
+      scene.freeze -= dt;
+      if (scene.freeze <= 0) scene.freezeEnded = scene.real;
+    }
+    else {
+      scene.now += dt;
+      acc += dt * speed();
+      if (scene.freezeIn >= 0) {
+        scene.freezeIn -= dt;
+        if (scene.freezeIn < 0) {
+          scene.freeze = COMBO_PAUSE;
+          scene.shake = 0;
+        }
+      }
+    }
     while (acc >= TICK && !battle.outcome) {
+      if (scene.freezeAtSim && battle.time >= scene.freezeAtSim.t) {
+        scene.freeze = COMBO_PAUSE;
+        scene.shake = 0;
+        scene.banner = { text: scene.freezeAtSim.text, born: scene.real };
+        scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir: 1 });
+        scene.freezeAtSim = null;
+        acc = 0;
+        break;
+      }
       battle.step();
       acc -= TICK;
     }
@@ -253,7 +299,7 @@ export function playBattle(
         for (let i = 0; i < 40; i++) scene.particles.push({ x: rand(0, W), y: rand(-60, 0), vx: rand(-20, 20), vy: rand(60, 140), life: 0, max: 2.5, size: rand(3, 6), color: `hsl(${rand(0, 360)},90%,65%)`, gravity: 30 });
       }
     }
-    update(scene, battle, dt, reduced);
+    update(scene, battle, frozen ? 0 : dt, reduced);
     draw(ctx, battle, look, scene, layers, heights, reduced);
     renderHud(hud, battle);
     // Let the death animation and last numbers play before showing the result.
@@ -386,7 +432,7 @@ function draw(
     // Melee lunges forward then eases back; ranged only rocks slightly.
     const lk = (t - a.lunge) / 0.28;
     const attack = lk >= 0 && lk < 1 ? lk : -1;
-    const skillHit = a.skill !== null && t - a.skill.at < 0.3;
+    const skillHit = a.skill !== null && a.skill.phase !== "windup" && t - a.skill.at < 0.3;
     const lunge = attack >= 0 ? Math.sin(attack * Math.PI) * (melee ? (skillHit ? 24 : 12) : 3) * facing : 0;
     const hk = (t - a.hurt) / 0.25;
     const hurt = hk >= 0 && hk < 1 ? hk : -1;
@@ -405,7 +451,7 @@ function draw(
       windup: windup(battle, side),
       hurt,
       death: death ?? undefined,
-      skill: a.skill && t - a.skill.at < SKILL_ANIM ? { id: a.skill.id, p: (t - a.skill.at) / SKILL_ANIM } : undefined,
+      skill: skillPose(a.skill, battle, t),
     });
     drawFighter(ctx, layer, {
       x, facing, h: heights[side],
@@ -448,6 +494,13 @@ function draw(
   ctx.fillText(`${battle.time.toFixed(1)}s`, 10, 18);
 }
 
+function skillPose(s: FighterAnim["skill"], battle: Battle, t: number): Pose["skill"] {
+  if (!s) return undefined;
+  // The wind-up follows battle time, so it holds still through a freeze and ends as the hit lands.
+  if (s.phase === "windup") return { id: s.id, phase: s.phase, p: Math.min(1, (battle.time - s.simAt) / (WINDUP[s.id] ?? 1)) };
+  return t - s.at < SKILL_ANIM ? { id: s.id, phase: s.phase, p: (t - s.at) / SKILL_ANIM } : undefined;
+}
+
 /** Per-skill impact: a big name callout plus effects loud enough to read at a glance. */
 function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 | -1): void {
   const k = SKILLS[skill];
@@ -459,26 +512,22 @@ function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 
       scene.add({ kind: "ring", dur: 0.3, x: hit, y, color: "#ffffff", size: 44, dir });
       scene.burst(hit, y, 28, "#d8f0ff", 260, 200, 4);
       scene.shake = Math.max(scene.shake, 9);
-      scene.hitstop = Math.max(scene.hitstop, 0.12);
       break;
     case "heavyStrike":
       scene.add({ kind: "ring", dur: 0.4, x, y: GROUND - 4, color: "#ffb347", size: 70, dir });
       scene.burst(x, GROUND - 2, 34, "rgba(170,140,100,0.9)", 220, 500, 6);
       scene.burst(x, y, 16, "#ffd27a", 240, 300, 4);
       scene.shake = Math.max(scene.shake, 10);
-      scene.hitstop = Math.max(scene.hitstop, 0.14);
       break;
     case "charge":
       scene.add({ kind: "ring", dur: 0.5, x: hit, y, color: "#ffd34d", size: 90, dir });
       scene.burst(hit, y, 30, "#ffe08a", 300, 250, 5);
       scene.shake = Math.max(scene.shake, 11);
-      scene.hitstop = Math.max(scene.hitstop, 0.14);
       break;
     case "spartanKick":
       scene.add({ kind: "ring", dur: 0.35, x: hit, y: y + 16, color: "#ffffff", size: 60, dir });
       scene.burst(hit, y + 16, 20, "#f0e6d8", 240, 250, 4);
       scene.shake = Math.max(scene.shake, 7);
-      scene.hitstop = Math.max(scene.hitstop, 0.1);
       break;
     default:
       scene.shake = Math.max(scene.shake, 5);
@@ -488,13 +537,18 @@ function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 
 function drawBanner(ctx: CanvasRenderingContext2D, scene: Scene): void {
   const b = scene.banner;
   if (!b) return;
-  const age = scene.now - b.born;
-  if (age > 1.6) {
+  const age = scene.real - b.born;
+  if (scene.freeze > 0) {
+    // Dim the frozen frame so the banner reads as a beat.
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(0, 0, W, H);
+  }
+  if (age > COMBO_PAUSE + 0.6) {
     scene.banner = null;
     return;
   }
   const pop = age < 0.15 ? 0.5 + (age / 0.15) * 0.7 : age < 0.25 ? 1.2 - ((age - 0.15) / 0.1) * 0.2 : 1;
-  ctx.globalAlpha = Math.max(0, 1 - Math.max(0, age - 1.1) * 2);
+  ctx.globalAlpha = Math.max(0, 1 - Math.max(0, age - COMBO_PAUSE - 0.1) * 2);
   ctx.textAlign = "center";
   ctx.font = `900 ${Math.round(34 * pop)}px system-ui, sans-serif`;
   ctx.lineWidth = 6;
