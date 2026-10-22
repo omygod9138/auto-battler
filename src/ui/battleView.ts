@@ -1,4 +1,4 @@
-import { ARENA, TICK, WINDUP, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
+import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { SKILLS, type SkillId } from "../core/skills";
 import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Pose } from "./characters";
 
@@ -21,8 +21,6 @@ const WALL_X = W - PAD_R + STANDOFF + 30;
 const COMBO_PAUSE = 1.2;
 /** No new freeze until this many real seconds after the last one ended, so a combo chain pauses once. */
 const COMBO_PAUSE_GAP = 4;
-/** Scene seconds between the combo hit and the freeze, so its impact is on screen. */
-const COMBO_PAUSE_DELAY = 0.08;
 /** Seconds a skill clip takes to play from the moment its hit lands. */
 const SKILL_ANIM = 0.5;
 const fx = (battle: Battle, side: Side) => px(side === "hero" ? battle.hero.x : battle.mob.x) + (side === "hero" ? -STANDOFF : STANDOFF);
@@ -87,7 +85,8 @@ interface FighterAnim {
   moving: number;
   deathAt: number | null;
   /** The skill behind the latest hit and when it landed. */
-  skill: { id: SkillId; at: number; phase: "windup" | "strike" | "full"; simAt: number } | null;
+  /** at: scene time the phase began; simAt/simEnd: battle times a wind-up runs between. */
+  skill: { id: SkillId; at: number; phase: "windup" | "strike" | "full"; simAt: number; simEnd: number } | null;
 }
 
 /** Real-time (not battle-time) animation state, so idle motion keeps going while paused or after the end. */
@@ -102,12 +101,10 @@ class Scene {
   real = 0;
   /** Real seconds left of a combo freeze; nothing moves while it runs. */
   freeze = 0;
-  /** Scene seconds until a pending freeze starts, or -1. */
-  freezeIn = -1;
   /** Real time the last freeze ended. */
   freezeEnded = -99;
-  /** Battle time at which to freeze, for a combo whose wind-up ends then, and the banner to show. */
-  freezeAtSim: { t: number; text: string } | null = null;
+  /** Battle time of the last freeze, so resuming doesn't freeze on the same step again. */
+  frozeAt = -1;
   /** When the mob was last slammed into the wall, for cracks. */
   wallHit = -9;
   /** A large centred callout, for combos. */
@@ -179,7 +176,11 @@ export function playBattle(
         const attacker: Side = target === "mob" ? "hero" : "mob";
         const big = e.crit || (e.label !== undefined && e.label !== "Zap!");
         scene.anim[target].hurt = scene.now;
-        if (e.skill) scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: WINDUP[e.skill] ? "strike" : "full", simAt: e.t };
+        if (e.skill) {
+          // After its wind-up a clip plays the strike part; a skill that never wound up plays it whole.
+          const wound = scene.anim[attacker].skill?.id === e.skill && scene.anim[attacker].skill?.phase === "windup";
+          scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: wound ? "strike" : "full", simAt: e.t, simEnd: e.t };
+        }
         if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
           scene.anim[attacker].lunge = scene.now;
           scene.add({ kind: "slash", dur: 0.22, x: x - dir * 10, y, color: e.fx === "claw" ? "#ff9f9f" : "#ffffff", size: big ? 46 : 34, dir });
@@ -220,20 +221,13 @@ export function playBattle(
         scene.add({ kind: "ring", dur: 0.25, x, y, color: "rgba(200,220,255,0.6)", size: 26, dir });
         break;
       case "windup":
-        scene.anim.hero.skill = { id: e.skill, at: scene.now, phase: "windup", simAt: e.t };
-        // A combo pauses as the wind-up ends: momentum gathered, swing still to come.
-        if (e.combo && scene.freeze <= 0 && scene.real - scene.freezeEnded > COMBO_PAUSE_GAP) {
-          // Freeze before the step that lands the hit (it lands once battle time reaches the wind-up's end).
-          scene.freezeAtSim = { t: e.t + (WINDUP[e.skill] ?? 0) - TICK - 1e-6, text: e.combo };
-        }
+        scene.anim.hero.skill = { id: e.skill, at: scene.now, phase: "windup", simAt: e.t, simEnd: e.at };
         break;
       case "status":
         if (e.label.startsWith("Combo")) {
-          // Its wind-up already paused under this banner; don't pop it again.
+          // The pause before the hit already showed this banner; don't pop it again.
           if (scene.banner?.text === e.label && scene.real - scene.banner.born < COMBO_PAUSE + 0.6) break;
-          // Only combos stop the action: a solo skill never pauses.
           scene.banner = { text: e.label, born: scene.real };
-          if (scene.freeze <= 0 && scene.real - scene.freezeEnded > COMBO_PAUSE_GAP) scene.freezeIn = COMBO_PAUSE_DELAY;
           scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir });
           break;
         }
@@ -267,21 +261,17 @@ export function playBattle(
     else {
       scene.now += dt;
       acc += dt * speed();
-      if (scene.freezeIn >= 0) {
-        scene.freezeIn -= dt;
-        if (scene.freezeIn < 0) {
-          scene.freeze = COMBO_PAUSE;
-          scene.shake = 0;
-        }
-      }
     }
     while (acc >= TICK && !battle.outcome) {
-      if (scene.freezeAtSim && battle.time >= scene.freezeAtSim.t) {
+      // Every combo pauses at the end of its wind-up, right before the hit: momentum gathered, swing to come.
+      // Only combos pause, and only once per chain.
+      const combo = battle.comboNext();
+      if (combo && scene.frozeAt !== battle.time && scene.real - scene.freezeEnded > COMBO_PAUSE_GAP) {
         scene.freeze = COMBO_PAUSE;
+        scene.frozeAt = battle.time;
         scene.shake = 0;
-        scene.banner = { text: scene.freezeAtSim.text, born: scene.real };
+        scene.banner = { text: combo, born: scene.real };
         scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir: 1 });
-        scene.freezeAtSim = null;
         acc = 0;
         break;
       }
@@ -497,7 +487,11 @@ function draw(
 function skillPose(s: FighterAnim["skill"], battle: Battle, t: number): Pose["skill"] {
   if (!s) return undefined;
   // The wind-up follows battle time, so it holds still through a freeze and ends as the hit lands.
-  if (s.phase === "windup") return { id: s.id, phase: s.phase, p: Math.min(1, (battle.time - s.simAt) / (WINDUP[s.id] ?? 1)) };
+  // It reaches its last wind-up frame on the step before the hit, where a combo pause holds it.
+  if (s.phase === "windup") {
+    const span = s.simEnd - s.simAt - TICK;
+    return { id: s.id, phase: s.phase, p: span <= 1e-9 || battle.time >= s.simEnd - TICK - 1e-9 ? 1 : Math.min(1, (battle.time - s.simAt) / span) };
+  }
   return t - s.at < SKILL_ANIM ? { id: s.id, phase: s.phase, p: (t - s.at) / SKILL_ANIM } : undefined;
 }
 

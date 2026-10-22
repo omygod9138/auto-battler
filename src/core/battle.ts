@@ -1,5 +1,5 @@
 import { Rng } from "./rng";
-import { COMBOS, COMBO_WINDOW, SKILL_NUM as N, type Combo, type SkillId, type SkillLevels } from "./skills";
+import { COMBOS, SKILL_NUM as N, type Combo, type SkillId, type SkillLevels } from "./skills";
 import type { Stats } from "./stats";
 
 export const TICK = 1 / 20;
@@ -36,19 +36,26 @@ export type BattleEvent =
   | { t: number; type: "heal"; target: Side; amount: number }
   | { t: number; type: "dodge"; target: Side }
   | { t: number; type: "status"; target: Side; label: string }
-  /** A skill starts winding up; its hit lands WINDUP[skill] seconds later. combo is the label it will complete. */
-  | { t: number; type: "windup"; target: Side; skill: SkillId; combo?: string };
+  /** A skill starts winding up; its hit lands at battle time `at`. combo is the label it will complete. */
+  | { t: number; type: "windup"; target: Side; skill: SkillId; at: number; combo?: string };
 
 export type Outcome = "win" | "loss";
 
-type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" | "charge" | "spartanKick";
+type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" | "charge" | "spartanKick" | "heavyStrike" | "static";
 
-/** Skills that wind up before they hit, in seconds, so the art can gather momentum first. */
-export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3 };
+/** Every attack skill winds up before it hits, so the art can gather momentum and a combo can pause
+ * right before the hit. Seconds; skills not listed use WINDUP_DEFAULT. Charge's wind-up is its dash. */
+export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3, spartanKick: 0.2 };
+export const WINDUP_DEFAULT = 0.25;
 
-/** Charge dash and knockback slide speeds, in arena units per second. */
+/** Seconds after a skill lands before the next attack (and after a swing before the next skill), so two never look simultaneous. */
+export const SKILL_RECOVERY = 0.35;
+
+/** Charge dash speed, in arena units per second. */
 const DASH_SPEED = 16;
-const PUSH_SPEED = 12;
+/** Knockback covers this share of what's left each tick (with a floor), so it launches fast and skids to a stop. */
+const PUSH_SHARE = 0.6;
+const PUSH_MIN_STEP = 0.1;
 
 interface Dot {
   dps: number;
@@ -64,18 +71,17 @@ export class Battle {
 
   private rng: Rng;
   private lv: (id: SkillId) => number;
-  private hits = 0;
   /** Charge has landed at least once, so held skills may follow it. */
   private charged = false;
-  private chargedAt = -99;
   /** The hero is mid Charge dash. */
   dashing = false;
   /** A wound-up skill waiting to land. */
   private pending: { skill: SkillId; at: number } | null = null;
-  /** The last attack skill and when it landed, for combos. */
+  /** The skill behind the hero's previous attack, or null if it was a plain swing; combos need it to be the very last attack. */
   private lastSkill: SkillId | null = null;
-  private lastSkillAt = -99;
   private cds = new Map<SkillId, number>();
+  /** When the hero last hit (swing or skill); skills wait SKILL_RECOVERY after it too. */
+  private lastHit = -99;
   private poison: Dot[] = [];
   private burn: Dot[] = [];
   private secondWindUsed = false;
@@ -98,7 +104,7 @@ export class Battle {
     if (this.lv("manaShield")) this.hero.shield = heroStats.maxHp * N.manaShield(this.lv("manaShield")).shield;
     this.snareX = this.lv("snare") ? ARENA.heroStart + heroStats.range + 1.5 : null;
     // Active skills start at half cooldown so the first cast comes early.
-    for (const id of ["shieldBash", "headshot", "fireball", "frostNova", "meteor", "spartanKick"] as const) {
+    for (const id of ["shieldBash", "headshot", "fireball", "frostNova", "meteor", "spartanKick", "heavyStrike", "static"] as const) {
       if (this.lv(id)) this.cds.set(id, this.cooldown(id) / 2);
     }
     // Charge opens the fight, with Shield Bash ready to follow it.
@@ -139,7 +145,8 @@ export class Battle {
     const lv = this.lv(id);
     const base = id === "shieldBash" ? N.shieldBash(lv).cd : id === "headshot" ? N.headshot(lv).cd
       : id === "fireball" ? N.fireball(lv).cd : id === "frostNova" ? N.frostNova(lv).cd
-      : id === "charge" ? N.charge(lv).cd : id === "spartanKick" ? N.spartanKick(lv).cd : N.meteor(lv).cd;
+      : id === "charge" ? N.charge(lv).cd : id === "spartanKick" ? N.spartanKick(lv).cd
+      : id === "heavyStrike" ? N.heavyStrike(lv).cd : id === "static" ? N.static(lv).cd : N.meteor(lv).cd;
     return base * this.hero.s.cdMult;
   }
 
@@ -149,7 +156,7 @@ export class Battle {
       f.root = Math.max(0, f.root - TICK);
       f.vuln = Math.max(0, f.vuln - TICK);
       if (f.push !== 0) {
-        const step = Math.sign(f.push) * Math.min(Math.abs(f.push), PUSH_SPEED * TICK);
+        const step = Math.sign(f.push) * Math.min(Math.abs(f.push), Math.max(PUSH_MIN_STEP, Math.abs(f.push) * PUSH_SHARE));
         const x = Math.max(0, Math.min(ARENA.length, f.x + step));
         f.push = x === f.x + step ? f.push - step : 0;
         f.x = x;
@@ -188,13 +195,17 @@ export class Battle {
     if (me.stun > 0 || me.push !== 0) return;
     if (me.side === "hero" && this.dashing) return this.dash();
     if (me.side === "hero" && this.pending) {
-      if (this.time >= this.pending.at - 1e-9) this.land(this.pending.skill);
+      if (this.time >= this.pending.at - 1e-9) {
+        this.land(this.pending.skill);
+        this.recover();
+      }
       return;
     }
     const dist = Math.abs(foe.x - me.x);
-    if (me.side === "hero") this.castActives(dist);
-    // A skill that just started (dash or wind-up) takes the rest of the tick.
-    if (this.outcome || (me.side === "hero" && (this.dashing || this.pending))) return;
+    // One action per tick: a skill (including the start of a dash or wind-up) replaces the swing.
+    const recovered = this.time - this.lastHit >= SKILL_RECOVERY - 1e-9;
+    if (me.side === "hero" && recovered && this.castActives(dist)) return this.recover();
+    if (this.outcome) return;
 
     if (dist > me.s.range + 1e-6) {
       if (me.root > 0) return;
@@ -212,8 +223,13 @@ export class Battle {
     me.atkTimer -= TICK;
     if (me.atkTimer > 0) return;
     me.atkTimer = this.interval(me);
-    if (me.side === "hero") this.heroAttack();
-    else this.mobAttack();
+    if (me.side === "mob") return this.mobAttack();
+    // Heavy Strike is a skill, so its swing winds up like any other.
+    if (this.heavyReady()) {
+      this.cds.set("heavyStrike", this.cooldown("heavyStrike"));
+      return this.windUp("heavyStrike");
+    }
+    this.heroAttack();
   }
 
   private interval(f: Fighter): number {
@@ -231,50 +247,107 @@ export class Battle {
     return f.s.interval / (1 + berserk);
   }
 
-  private castActives(dist: number): void {
+  /** Fire at most one ready active skill. Returns true if one fired: that is the hero's whole action this tick. */
+  private castActives(dist: number): boolean {
     const h = this.hero;
     const ready = (id: SkillId) => this.lv(id) > 0 && this.cds.get(id) === 0;
     // Same tolerance as movement: fighters stop at range plus float error.
     const inRange = dist <= h.s.range + 1e-6;
-    if (ready("frostNova") && inRange) {
-      const n = N.frostNova(this.lv("frostNova"));
-      this.cds.set("frostNova", this.cooldown("frostNova"));
-      this.mob.stun = Math.max(this.mob.stun, n.freeze);
-      this.spell(h.s.dmg * n.mult, "frost", "Frost Nova", "frostNova");
-    }
-    if (ready("meteor") && inRange) {
-      this.cds.set("meteor", this.cooldown("meteor"));
-      this.spell(h.s.dmg * N.meteor(this.lv("meteor")).mult, "meteor", "Meteor!", "meteor");
-    }
-    if (ready("fireball") && inRange) {
-      const n = N.fireball(this.lv("fireball"));
-      this.cds.set("fireball", this.cooldown("fireball"));
-      this.spell(h.s.dmg * n.mult, "fireball", "Fireball", "fireball");
-      this.addBurn(n.burn, 3);
-    }
-    if (ready("headshot") && inRange) {
-      this.cds.set("headshot", this.cooldown("headshot"));
-      this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!", "headshot");
+    for (const id of ["frostNova", "meteor", "fireball", "headshot"] as const) {
+      if (ready(id) && inRange) {
+        this.cds.set(id, this.cooldown(id));
+        this.windUp(id);
+        return true;
+      }
     }
     // Charge only when Shield Bash can follow it.
     const bashReady = !this.lv("shieldBash") || ready("shieldBash");
     if (ready("charge") && bashReady && !inRange && dist <= N.charge(this.lv("charge")).range && this.mob.push === 0) {
       this.cds.set("charge", this.cooldown("charge"));
       this.dashing = true;
-      return;
+      // The dash is Charge's wind-up; announce roughly when it will hit.
+      const ticks = Math.ceil((dist - h.s.range) / (DASH_SPEED * TICK) - 1e-9);
+      this.emit({ t: this.time, type: "windup", target: "mob", skill: "charge", at: this.time + ticks * TICK, combo: this.peekCombo("charge")?.label });
+      return true;
     }
     // Hold the bash until Charge has opened the fight, so the two can combo. With Spartan Kick
     // Charge comes back every cycle, so the bash is saved for right after each Charge.
     const awaitCharge = this.lv("charge") > 0 && !this.charged;
-    const saveBash = this.lv("charge") > 0 && this.lv("spartanKick") > 0 && this.time - this.chargedAt > COMBO_WINDOW;
+    const saveBash = this.lv("charge") > 0 && this.lv("spartanKick") > 0 && this.lastSkill !== "charge";
     if (ready("shieldBash") && inRange && !awaitCharge && !saveBash) {
       this.cds.set("shieldBash", this.cooldown("shieldBash"));
-      return this.windUp("shieldBash");
+      this.windUp("shieldBash");
+      return true;
     }
     // Kick only when Charge (and the Bash after it) can follow, so the knockback sets up the combo.
     if (ready("spartanKick") && dist <= h.s.range + 1e-6 && !awaitCharge && (!this.lv("charge") || (ready("charge") && bashReady))) {
-      const n = N.spartanKick(this.lv("spartanKick"));
       this.cds.set("spartanKick", this.cooldown("spartanKick"));
+      this.windUp("spartanKick");
+      return true;
+    }
+    return false;
+  }
+
+  /** Close the gap at dash speed, then hit with Charge on arrival. */
+  private dash(): void {
+    const h = this.hero;
+    const gap = this.mob.x - h.x - h.s.range;
+    h.x += Math.max(0, Math.min(DASH_SPEED * TICK, gap));
+    if (gap > DASH_SPEED * TICK) return;
+    this.dashing = false;
+    this.charged = true;
+    this.recover();
+    const n = N.charge(this.lv("charge"));
+    const c = this.combo("charge");
+    if (this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Charge!", "charge")) {
+      this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1) + (c?.stunAdd ?? 0));
+    }
+  }
+
+  private recover(): void {
+    this.hero.atkTimer = Math.max(this.hero.atkTimer, SKILL_RECOVERY);
+  }
+
+  /** Start a wound-up skill; it lands from act() once WINDUP has passed. */
+  private windUp(skill: SkillId): void {
+    const at = this.time + (WINDUP[skill] ?? WINDUP_DEFAULT);
+    this.pending = { skill, at };
+    this.emit({ t: this.time, type: "windup", target: "mob", skill, at, combo: this.peekCombo(skill)?.label });
+  }
+
+  /** The combo label the next step() will land, if any, so the view can pause right before the hit. */
+  comboNext(): string | null {
+    const h = this.hero;
+    if (this.outcome || h.stun > 0 || h.push !== 0) return null;
+    if (this.pending && this.time + TICK >= this.pending.at - 1e-9) return this.peekCombo(this.pending.skill)?.label ?? null;
+    if (this.dashing && this.mob.x - h.x - h.s.range <= DASH_SPEED * TICK) return this.peekCombo("charge")?.label ?? null;
+    return null;
+  }
+
+  private land(skill: SkillId): void {
+    this.pending = null;
+    const h = this.hero;
+    if (skill === "heavyStrike") return this.heroAttack(true);
+    if (skill === "frostNova") {
+      const n = N.frostNova(this.lv("frostNova"));
+      this.mob.stun = Math.max(this.mob.stun, n.freeze);
+      this.spell(h.s.dmg * n.mult, "frost", "Frost Nova", "frostNova");
+    }
+    if (skill === "meteor") this.spell(h.s.dmg * N.meteor(this.lv("meteor")).mult, "meteor", "Meteor!", "meteor");
+    if (skill === "fireball") {
+      const n = N.fireball(this.lv("fireball"));
+      this.spell(h.s.dmg * n.mult, "fireball", "Fireball", "fireball");
+      this.addBurn(n.burn, 3);
+    }
+    if (skill === "headshot") this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!", "headshot");
+    if (skill === "shieldBash") {
+      const n = N.shieldBash(this.lv("shieldBash"));
+      const c = this.combo("shieldBash");
+      this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Bash!", "shieldBash");
+      this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
+    }
+    if (skill === "spartanKick") {
+      const n = N.spartanKick(this.lv("spartanKick"));
       this.combo("spartanKick");
       if (this.physical(h.s.dmg * n.mult, "bash", "Kick!", "spartanKick")) {
         // Against the far wall the kicker bounces back instead, so the gap still opens,
@@ -290,50 +363,22 @@ export class Battle {
     }
   }
 
-  /** Close the gap at dash speed, then hit with Charge on arrival. */
-  private dash(): void {
-    const h = this.hero;
-    const gap = this.mob.x - h.x - h.s.range;
-    h.x += Math.max(0, Math.min(DASH_SPEED * TICK, gap));
-    if (gap > DASH_SPEED * TICK) return;
-    this.dashing = false;
-    this.charged = true;
-    this.chargedAt = this.time;
-    const n = N.charge(this.lv("charge"));
-    const c = this.combo("charge");
-    if (this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Charge!", "charge")) {
-      this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1) + (c?.stunAdd ?? 0));
-    }
-  }
-
-  /** Start a wound-up skill; it lands from act() once WINDUP has passed. */
-  private windUp(skill: SkillId): void {
-    this.pending = { skill, at: this.time + (WINDUP[skill] ?? 0) };
-    this.emit({ t: this.time, type: "windup", target: "mob", skill, combo: this.peekCombo(skill)?.label });
-  }
-
-  private land(skill: SkillId): void {
-    this.pending = null;
-    const h = this.hero;
-    if (skill === "shieldBash") {
-      const n = N.shieldBash(this.lv("shieldBash"));
-      const c = this.combo("shieldBash");
-      this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Bash!", "shieldBash");
-      this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
-    }
+  /** Heavy Strike is held for the swing right after Shield Bash, unless the bash is further off than a whole Heavy cooldown. */
+  private heavyReady(): boolean {
+    if (!this.lv("heavyStrike") || this.cds.get("heavyStrike") !== 0) return false;
+    if (!this.lv("shieldBash") || this.lastSkill === "shieldBash") return true;
+    return this.cds.get("shieldBash")! > this.cooldown("heavyStrike");
   }
 
   /** The combo a skill would complete if it landed now. */
   private peekCombo(skill: SkillId): Combo | undefined {
-    const prev = this.time - this.lastSkillAt <= COMBO_WINDOW ? this.lastSkill : null;
-    return COMBOS.find(({ pair }) => pair[0] === prev && pair[1] === skill);
+    return COMBOS.find(({ pair }) => pair[0] === this.lastSkill && pair[1] === skill);
   }
 
   /** Record an attack skill and return the combo it completes, if any. */
   private combo(skill: SkillId): Combo | undefined {
     const c = this.peekCombo(skill);
     this.lastSkill = skill;
-    this.lastSkillAt = this.time;
     if (c) this.emit({ t: this.time, type: "status", target: "hero", label: c.label });
     return c;
   }
@@ -343,21 +388,19 @@ export class Battle {
     this.burn.push({ dps: dps * this.hero.s.spellPower * ig.dmgMult, left: dur * ig.durMult });
   }
 
-  private heroAttack(): void {
+  private heroAttack(heavy = false): void {
     const h = this.hero;
-    this.hits++;
     let mult = 1;
     let label: string | undefined;
     let skill: SkillId | undefined;
-    if (this.lv("heavyStrike")) {
-      const hs = N.heavyStrike(this.lv("heavyStrike"));
-      if (this.hits % hs.every === 0) {
-        mult *= hs.mult;
-        label = "Heavy Strike!";
-        skill = "heavyStrike";
-      }
+    if (heavy) {
+      mult *= N.heavyStrike(this.lv("heavyStrike")).mult;
+      label = "Heavy Strike!";
+      skill = "heavyStrike";
     }
     const c = skill && this.combo(skill);
+    // A plain swing sits between any two skills, so it breaks the chain.
+    if (!skill) this.lastSkill = null;
     if (c) mult *= c.dmgMult ?? 1;
     const fx: FxKind = h.s.magic ? "bolt" : h.s.range > 2 ? "arrow" : "slash";
     const landed = this.physical(h.s.dmg * mult, fx, label, skill);
@@ -375,7 +418,8 @@ export class Battle {
     if (this.lv("knockback") && this.rng.next() < N.knockback(this.lv("knockback")).chance) {
       this.mob.x = Math.min(ARENA.length, this.mob.x + N.knockback(1).dist);
     }
-    if (this.lv("static") && this.rng.next() < N.static(this.lv("static")).chance) {
+    if (this.lv("static") && this.cds.get("static") === 0) {
+      this.cds.set("static", this.cooldown("static"));
       this.spell(h.s.dmg * N.static(this.lv("static")).mult, "lightning", "Zap!");
     }
     if (this.lv("ignite") && h.s.magic) this.addBurn(h.s.dmg * 0.3, 2);
@@ -385,6 +429,7 @@ export class Battle {
   private physical(raw: number, fx: FxKind, label?: string, skill?: SkillId): boolean {
     const h = this.hero;
     const m = this.mob;
+    this.lastHit = this.time;
     if (!h.s.magic && this.rng.next() < m.s.dodge) {
       this.emit({ t: this.time, type: "dodge", target: "mob" });
       return false;
@@ -399,6 +444,7 @@ export class Battle {
 
   /** Spells never miss and ignore armor. */
   private spell(raw: number, fx: FxKind, label: string, skill?: SkillId): void {
+    this.lastHit = this.time;
     const crit = this.rng.next() < this.hero.s.crit;
     this.dealToMob(raw * this.hero.s.spellPower * (crit ? this.hero.s.critMult : 1) * this.execute(), crit, fx, label, skill);
   }

@@ -131,6 +131,8 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, id: string, pose: P
 
 /** Fraction of an attack clip played before the hit lands; the rest follows through. */
 const STRIKE = 0.55;
+/** Skill clips whose impact frame sits elsewhere: Charge hits on frame 3 of 9 (the dash before it), the kick on frame 4. */
+const SKILL_STRIKE: Partial<Record<SkillId, number>> = { charge: 3 / 9, spartanKick: 4 / 9 };
 
 function drawSprite(ctx: CanvasRenderingContext2D, art: SpriteSet, pose: Pose): void {
   const { anims } = art;
@@ -144,7 +146,7 @@ function drawSprite(ctx: CanvasRenderingContext2D, art: SpriteSet, pose: Pose): 
   if (!pick && skillClip) {
     const { p, phase } = pose.skill!;
     const n = skillClip.frames.length;
-    const k = Math.round(n * STRIKE);
+    const k = Math.max(1, Math.round(n * (SKILL_STRIKE[pose.skill!.id] ?? STRIKE)));
     pick = at(skillClip, phase === "windup" ? Math.min(k - 1, Math.floor(p * k)) : phase === "strike" ? k + Math.floor(p * (n - k)) : Math.floor(p * n));
   }
   if (!pick && anims.attack) {

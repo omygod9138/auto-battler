@@ -30,7 +30,7 @@ export interface SkillDef {
 export const MAX_LEVEL = 3;
 
 export interface Combo {
-  /** Two attack skills landing back to back, the second within COMBO_WINDOW of the first; the second gets the bonus. */
+  /** Two attack skills where the second is the hero's very next attack after the first; the second gets the bonus. */
   pair: [SkillId, SkillId];
   dmgMult?: number;
   stunMult?: number;
@@ -38,8 +38,6 @@ export interface Combo {
   stunAdd?: number;
   label: string;
 }
-
-export const COMBO_WINDOW = 4;
 
 /** Every combo is a pair; chains like Kick → Charge → Bash → Heavy are just pairs in a row. */
 export const COMBOS: Combo[] = [
@@ -60,11 +58,11 @@ export function comboEffect(c: Combo): string {
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 /** Trims float noise such as 1.2000000000000002. */
 const num = (v: number) => String(+v.toFixed(2));
-const nth = (n: number) => `${n}${n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th"}`;
 
 /** Numbers shared by the descriptions and the battle sim so they can't drift apart. */
 export const SKILL_NUM = {
-  heavyStrike: (lv: number) => ({ every: lv >= 3 ? 3 : 4, mult: 2 + 0.5 * lv }),
+  // Same cooldown as Shield Bash at Lv1, so each Bash can be followed by a Heavy Strike.
+  heavyStrike: (lv: number) => ({ cd: 7 - lv, mult: 2 + 0.5 * lv }),
   bloodlust: (lv: number) => 0.06 + 0.04 * lv,
   shieldBash: (lv: number) => ({ cd: 6, stun: 0.8 + 0.4 * lv, mult: 1 + 0.5 * lv }),
   berserk: (lv: number) => 0.4 * lv,
@@ -72,7 +70,8 @@ export const SKILL_NUM = {
   secondWind: (lv: number) => 0.25 + 0.15 * lv,
   // Same cooldown as Shield Bash, so every Charge can be followed by a Bash.
   charge: (lv: number) => ({ cd: 6, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
-  spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 2 }),
+  // Far enough that the Charge after it gets a proper run-up, still inside Charge's 6m range.
+  spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 4 }),
   multishot: (lv: number) => ({ arrows: lv, mult: 0.5 }),
   poison: (lv: number) => ({ dps: 1 + 1.5 * lv, dur: 4, maxStacks: 3 + 2 * lv }),
   knockback: (lv: number) => ({ chance: 0.25 + 0.1 * lv, dist: 1.5 }),
@@ -80,7 +79,7 @@ export const SKILL_NUM = {
   snare: (lv: number) => 1 + 0.75 * lv,
   fireball: (lv: number) => ({ cd: 4, mult: 2 + lv, burn: 2 + 2 * lv }),
   frostNova: (lv: number) => ({ cd: 9 - lv, freeze: 1.2 + 0.5 * lv, mult: 1 }),
-  static: (lv: number) => ({ chance: 0.15 + 0.1 * lv, mult: 1.5 }),
+  static: (lv: number) => ({ cd: [4, 3, 2.5][lv - 1] ?? 2.5, mult: 1.5 }),
   manaShield: (lv: number) => ({ shield: 0.15 + 0.1 * lv, refill: 8 }),
   ignite: (lv: number) => ({ durMult: 1 + 0.5 * lv, dmgMult: 1 + 0.25 * lv }),
   meteor: (lv: number) => ({ cd: 14 - 2 * lv, mult: 5 + 2 * lv }),
@@ -90,8 +89,8 @@ export const SKILL_NUM = {
 const S = SKILL_NUM;
 
 export const SKILLS: Record<SkillId, SkillDef> = {
-  heavyStrike: { id: "heavyStrike", name: "Heavy Strike", icon: "🔨", cls: "warrior", kind: "proc", cat: "attack",
-    desc: (lv) => `Every ${nth(S.heavyStrike(lv).every)} hit deals ×${num(S.heavyStrike(lv).mult)}.` },
+  heavyStrike: { id: "heavyStrike", name: "Heavy Strike", icon: "🔨", cls: "warrior", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${S.heavyStrike(lv).cd}s: your next swing deals ×${num(S.heavyStrike(lv).mult)}. Saved for right after Shield Bash.` },
   bloodlust: { id: "bloodlust", name: "Bloodlust", icon: "🩸", cls: "warrior", kind: "proc", cat: "passive",
     desc: (lv) => `Heal ${pct(S.bloodlust(lv))} of damage you deal.` },
   ironSkin: { id: "ironSkin", name: "Iron Skin", icon: "🛡️", cls: "warrior", kind: "passive", cat: "defense",
@@ -130,8 +129,8 @@ export const SKILLS: Record<SkillId, SkillDef> = {
     desc: (lv) => `Every ${S.fireball(lv).cd}s: ×${S.fireball(lv).mult} damage and burn ${S.fireball(lv).burn}/s for 3s.` },
   frostNova: { id: "frostNova", name: "Frost Nova", icon: "❄️", cls: "mage", kind: "active", cat: "defense",
     desc: (lv) => `Every ${S.frostNova(lv).cd}s: freeze the mob for ${S.frostNova(lv).freeze}s.` },
-  static: { id: "static", name: "Static Charge", icon: "🌩️", cls: "mage", kind: "proc", cat: "attack",
-    desc: (lv) => `${pct(S.static(lv).chance)} chance a hit adds a ×${S.static(lv).mult} lightning bolt.` },
+  static: { id: "static", name: "Static Charge", icon: "🌩️", cls: "mage", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${num(S.static(lv).cd)}s: your next hit adds a ×${S.static(lv).mult} lightning bolt.` },
   manaShield: { id: "manaShield", name: "Mana Shield", icon: "🔵", cls: "mage", kind: "proc", cat: "defense",
     desc: (lv) => `Barrier of ${pct(S.manaShield(lv).shield)} max HP, refills every ${S.manaShield(lv).refill}s.` },
   arcane: { id: "arcane", name: "Arcane Power", icon: "✨", cls: "mage", kind: "passive", cat: "passive",

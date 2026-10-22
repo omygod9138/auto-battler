@@ -90,7 +90,7 @@ export function startSandbox(app: HTMLElement): void {
         <div class="battle-bar"><div class="cds" id="cds"></div><div id="sb-status" class="muted"></div></div>
         <div class="sb-bottom">
           <div class="panel"><h3>Log</h3><ol id="sb-log" class="sb-log"></ol></div>
-          <div class="panel"><h3>Combos</h3><p class="muted">Second skill within 4s of the first. Pairs chain.</p>${combos}</div>
+          <div class="panel"><h3>Combos</h3><p class="muted">The second skill must be the very next attack; a normal swing in between breaks it. Pairs chain.</p>${combos}</div>
         </div>
       </div>`;
     fight();

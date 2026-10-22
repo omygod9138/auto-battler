@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { ARENA, Battle, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
+import { ARENA, Battle, SKILL_RECOVERY, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
-import { MAX_LEVEL, SKILLS, heroStats } from "../src/core/skills";
+import { COMBOS, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
 import { CLASSES, stats } from "../src/core/stats";
 
 const dummy = stats({ maxHp: 1000, dmg: 0, interval: 99, range: 1.2, speed: 0 });
@@ -151,13 +151,15 @@ describe("battle", () => {
     expect(b.distance).toBeLessThanOrEqual(1.3 + 1e-6);
   });
 
-  it("spartan kick knocks back 2m, then charge combos for +3s stun", () => {
+  it("spartan kick knocks the mob back, then charge combos for +3s stun", () => {
     const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1 }, dummy, 1);
+    // Away from the far wall, so the whole knockback goes to the mob.
+    b.mob.x = 12;
     const x0 = b.mob.x;
     for (let i = 0; i < 600 && !b.events.some((e) => e.type === "damage" && e.skill === "spartanKick"); i++) b.step();
     while (b.mob.push !== 0) b.step();
     // The dummy never walks, so all of its movement is the knockback.
-    expect(b.mob.x - x0).toBeCloseTo(2, 5);
+    expect(b.mob.x - x0).toBeCloseTo(SKILL_NUM.spartanKick(1).push, 5);
     let stun = 0;
     for (let i = 0; i < 100 && !stun; i++) {
       const before = b.events.length;
@@ -175,10 +177,11 @@ describe("battle", () => {
     // The fight drifts into the far wall; kicks must still open a gap there.
     for (let i = 0; i < 59 * 20; i++) b.step();
     const count = (pred: (e: (typeof b.events)[number]) => boolean) => b.events.filter(pred).length;
-    const charges = count((e) => e.type === "damage" && e.skill === "charge");
+    // A Charge in the last moments may not get its Bash before the cut-off.
+    const charges = count((e) => e.type === "damage" && e.skill === "charge" && e.t < 57);
     expect(charges).toBeGreaterThan(4);
-    expect(count((e) => e.type === "status" && e.label === "Combo! Stun ×2")).toBe(charges);
-    expect(count((e) => e.type === "status" && e.label === "Combo! Stun +3s")).toBe(charges - 1);
+    expect(count((e) => e.type === "status" && e.label === "Combo! Stun ×2" && e.t < 58)).toBe(charges);
+    expect(count((e) => e.type === "status" && e.label === "Combo! Stun +3s" && e.t < 57)).toBe(charges - 1);
   });
 
   it("a kick into the far wall slams: +33% damage taken for 5s", () => {
@@ -216,10 +219,106 @@ describe("battle", () => {
   it("shield bash winds up first and announces the combo it will land", () => {
     const b = new Battle(CLASSES.warrior.base, { charge: 1, shieldBash: 1 }, dummy, 1);
     for (let i = 0; i < 300; i++) b.step();
-    const wind = b.events.find((e) => e.type === "windup");
+    const wind = b.events.find((e) => e.type === "windup" && e.skill === "shieldBash");
     const hit = b.events.find((e) => e.type === "damage" && e.skill === "shieldBash");
     expect(wind?.type === "windup" && wind.combo).toBe("Combo! Stun ×2");
     expect(hit!.t - wind!.t).toBeCloseTo(WINDUP.shieldBash!, 5);
+  });
+
+  it.each([1, 2, 3, 4, 5])("a combo only counts when its second skill is the very next attack (seed %i)", (seed) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 3 }, wall, seed);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    let prevAttack: string | null = null;
+    let combos = 0;
+    for (const e of b.events) {
+      if (e.type === "status" && e.label.startsWith("Combo")) {
+        const c = COMBOS.find((c) => c.label === e.label)!;
+        expect(prevAttack).toBe(c.pair[0]);
+        combos++;
+      }
+      // Every hero attack (hit or dodged) moves the chain along; a plain swing has no skill.
+      if (e.type === "damage" && e.target === "mob") prevAttack = e.skill ?? "swing";
+    }
+    expect(combos).toBeGreaterThan(5);
+  });
+
+  it("heavy strike is a cooldown skill held for the swing right after shield bash", () => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { shieldBash: 1, heavyStrike: 1 }, wall, 1);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    const hits = b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" ? [e.skill ?? "swing"] : []));
+    const heavies = hits.flatMap((s, i) => (s === "heavyStrike" ? [hits[i - 1]] : []));
+    expect(heavies.length).toBeGreaterThan(5);
+    expect(new Set(heavies)).toEqual(new Set(["shieldBash"]));
+  });
+
+  it("static charge fires on its cooldown", () => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 4, speed: 0 });
+    const b = new Battle(CLASSES.mage.base, { static: 1 }, wall, 1);
+    for (let i = 0; i < 40 * 20; i++) b.step();
+    const zaps = b.events.filter((e) => e.type === "damage" && e.label === "Zap!").map((e) => e.t);
+    expect(zaps.length).toBeGreaterThan(5);
+    for (let i = 1; i < zaps.length; i++) expect(zaps[i] - zaps[i - 1]).toBeGreaterThanOrEqual(4 - 1e-6);
+  });
+
+  it.each([1, 2, 3])("never fires a skill and another attack together (seed %i)", (seed) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1, shieldBash: 1, heavyStrike: 1 }, wall, seed);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    const hits = b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" ? [e] : []));
+    expect(hits.length).toBeGreaterThan(20);
+    for (let i = 1; i < hits.length; i++) {
+      const gap = hits[i].t - hits[i - 1].t;
+      expect(gap).toBeGreaterThan(1e-9);
+      // A normal swing (or a swing-borne Heavy Strike) waits out the recovery after a skill.
+      if (hits[i - 1].skill && (!hits[i].skill || hits[i].skill === "heavyStrike")) expect(gap).toBeGreaterThanOrEqual(SKILL_RECOVERY - 1e-9);
+    }
+  });
+
+  it.each([
+    ["warrior", { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 2 }],
+    ["mage", { fireball: 2, frostNova: 2, meteor: 2, static: 2 }],
+    ["ranger", { headshot: 3, rapidFire: 3 }],
+  ] as const)("%s never starts a skill right on top of another attack", (cls, levels) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES[cls].base, levels, wall, 1);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    // One entry per attack: extra arrows and bolts land in the same tick as their swing.
+    const attacks: { t: number; skill?: string }[] = [];
+    for (const e of b.events) {
+      if (e.type !== "damage" || e.target !== "mob") continue;
+      const last = attacks[attacks.length - 1];
+      if (last && Math.abs(last.t - e.t) < 1e-9) last.skill ??= e.skill;
+      else attacks.push({ t: e.t, skill: e.skill });
+    }
+    const bad: unknown[] = [];
+    for (let i = 1; i < attacks.length; i++) {
+      if (!attacks[i].skill && !attacks[i - 1].skill) continue;
+      if (attacks[i].t - attacks[i - 1].t < SKILL_RECOVERY - 1e-6) bad.push([attacks[i - 1], attacks[i]]);
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it.each([1, 2, 3])("every combo winds up and is announced one step before it lands (seed %i)", (seed) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 2 }, wall, seed);
+    let combos = 0;
+    for (let i = 0; i < 59 * 20; i++) {
+      const next = b.comboNext();
+      const before = b.events.length;
+      b.step();
+      const landed = b.events.slice(before).filter((e) => e.type === "status" && e.label.startsWith("Combo"));
+      // A combo lands exactly when it was announced, and never unannounced.
+      expect(landed.map((e) => (e.type === "status" ? e.label : ""))).toEqual(next ? [next] : []);
+      combos += landed.length;
+    }
+    expect(combos).toBeGreaterThan(10);
+    // Every skill hit was preceded by its wind-up.
+    for (const e of b.events) {
+      if (e.type !== "damage" || !e.skill) continue;
+      expect(b.events.some((w) => w.type === "windup" && w.skill === e.skill && w.t < e.t)).toBe(true);
+    }
   });
 
   it("no combo from a single skill", () => {
