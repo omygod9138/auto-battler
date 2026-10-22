@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ARENA, Battle, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
-import { MAX_LEVEL, SKILLS, heroStats } from "../src/core/skills";
+import { COMBOS, MAX_LEVEL, SKILLS, heroStats } from "../src/core/skills";
 import { CLASSES, stats } from "../src/core/stats";
 
 const dummy = stats({ maxHp: 1000, dmg: 0, interval: 99, range: 1.2, speed: 0 });
@@ -220,6 +220,24 @@ describe("battle", () => {
     const hit = b.events.find((e) => e.type === "damage" && e.skill === "shieldBash");
     expect(wind?.type === "windup" && wind.combo).toBe("Combo! Stun ×2");
     expect(hit!.t - wind!.t).toBeCloseTo(WINDUP.shieldBash!, 5);
+  });
+
+  it.each([1, 2, 3, 4, 5])("a combo only counts when its second skill is the very next attack (seed %i)", (seed) => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+    const b = new Battle(CLASSES.warrior.base, { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 3 }, wall, seed);
+    for (let i = 0; i < 59 * 20; i++) b.step();
+    let prevAttack: string | null = null;
+    let combos = 0;
+    for (const e of b.events) {
+      if (e.type === "status" && e.label.startsWith("Combo")) {
+        const c = COMBOS.find((c) => c.label === e.label)!;
+        expect(prevAttack).toBe(c.pair[0]);
+        combos++;
+      }
+      // Every hero attack (hit or dodged) moves the chain along; a plain swing has no skill.
+      if (e.type === "damage" && e.target === "mob") prevAttack = e.skill ?? "swing";
+    }
+    expect(combos).toBeGreaterThan(5);
   });
 
   it("no combo from a single skill", () => {

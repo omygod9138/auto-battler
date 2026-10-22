@@ -30,7 +30,7 @@ export interface SkillDef {
 export const MAX_LEVEL = 3;
 
 export interface Combo {
-  /** Two attack skills landing back to back, the second within COMBO_WINDOW of the first; the second gets the bonus. */
+  /** Two attack skills where the second is the hero's very next attack after the first; the second gets the bonus. */
   pair: [SkillId, SkillId];
   dmgMult?: number;
   stunMult?: number;
@@ -38,8 +38,6 @@ export interface Combo {
   stunAdd?: number;
   label: string;
 }
-
-export const COMBO_WINDOW = 4;
 
 /** Every combo is a pair; chains like Kick → Charge → Bash → Heavy are just pairs in a row. */
 export const COMBOS: Combo[] = [

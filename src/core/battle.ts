@@ -1,5 +1,5 @@
 import { Rng } from "./rng";
-import { COMBOS, COMBO_WINDOW, SKILL_NUM as N, type Combo, type SkillId, type SkillLevels } from "./skills";
+import { COMBOS, SKILL_NUM as N, type Combo, type SkillId, type SkillLevels } from "./skills";
 import type { Stats } from "./stats";
 
 export const TICK = 1 / 20;
@@ -67,14 +67,12 @@ export class Battle {
   private hits = 0;
   /** Charge has landed at least once, so held skills may follow it. */
   private charged = false;
-  private chargedAt = -99;
   /** The hero is mid Charge dash. */
   dashing = false;
   /** A wound-up skill waiting to land. */
   private pending: { skill: SkillId; at: number } | null = null;
-  /** The last attack skill and when it landed, for combos. */
+  /** The skill behind the hero's previous attack, or null if it was a plain swing; combos need it to be the very last attack. */
   private lastSkill: SkillId | null = null;
-  private lastSkillAt = -99;
   private cds = new Map<SkillId, number>();
   private poison: Dot[] = [];
   private burn: Dot[] = [];
@@ -266,7 +264,7 @@ export class Battle {
     // Hold the bash until Charge has opened the fight, so the two can combo. With Spartan Kick
     // Charge comes back every cycle, so the bash is saved for right after each Charge.
     const awaitCharge = this.lv("charge") > 0 && !this.charged;
-    const saveBash = this.lv("charge") > 0 && this.lv("spartanKick") > 0 && this.time - this.chargedAt > COMBO_WINDOW;
+    const saveBash = this.lv("charge") > 0 && this.lv("spartanKick") > 0 && this.lastSkill !== "charge";
     if (ready("shieldBash") && inRange && !awaitCharge && !saveBash) {
       this.cds.set("shieldBash", this.cooldown("shieldBash"));
       return this.windUp("shieldBash");
@@ -298,7 +296,6 @@ export class Battle {
     if (gap > DASH_SPEED * TICK) return;
     this.dashing = false;
     this.charged = true;
-    this.chargedAt = this.time;
     const n = N.charge(this.lv("charge"));
     const c = this.combo("charge");
     if (this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Charge!", "charge")) {
@@ -325,15 +322,13 @@ export class Battle {
 
   /** The combo a skill would complete if it landed now. */
   private peekCombo(skill: SkillId): Combo | undefined {
-    const prev = this.time - this.lastSkillAt <= COMBO_WINDOW ? this.lastSkill : null;
-    return COMBOS.find(({ pair }) => pair[0] === prev && pair[1] === skill);
+    return COMBOS.find(({ pair }) => pair[0] === this.lastSkill && pair[1] === skill);
   }
 
   /** Record an attack skill and return the combo it completes, if any. */
   private combo(skill: SkillId): Combo | undefined {
     const c = this.peekCombo(skill);
     this.lastSkill = skill;
-    this.lastSkillAt = this.time;
     if (c) this.emit({ t: this.time, type: "status", target: "hero", label: c.label });
     return c;
   }
@@ -358,6 +353,8 @@ export class Battle {
       }
     }
     const c = skill && this.combo(skill);
+    // A plain swing sits between any two skills, so it breaks the chain.
+    if (!skill) this.lastSkill = null;
     if (c) mult *= c.dmgMult ?? 1;
     const fx: FxKind = h.s.magic ? "bolt" : h.s.range > 2 ? "arrow" : "slash";
     const landed = this.physical(h.s.dmg * mult, fx, label, skill);
