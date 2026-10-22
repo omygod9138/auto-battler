@@ -44,7 +44,7 @@ export type Outcome = "win" | "loss";
 type ActiveId = "shieldBash" | "headshot" | "fireball" | "frostNova" | "meteor" | "charge" | "spartanKick" | "heavyStrike" | "static";
 
 /** Skills that wind up before they hit, in seconds, so the art can gather momentum first. */
-export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3 };
+export const WINDUP: Partial<Record<SkillId, number>> = { shieldBash: 0.3, spartanKick: 0.2 };
 
 /** Seconds after a skill lands before the next attack (and after a swing before the next skill), so two never look simultaneous. */
 export const SKILL_RECOVERY = 0.35;
@@ -288,20 +288,8 @@ export class Battle {
     }
     // Kick only when Charge (and the Bash after it) can follow, so the knockback sets up the combo.
     if (ready("spartanKick") && dist <= h.s.range + 1e-6 && !awaitCharge && (!this.lv("charge") || (ready("charge") && bashReady))) {
-      const n = N.spartanKick(this.lv("spartanKick"));
       this.cds.set("spartanKick", this.cooldown("spartanKick"));
-      this.combo("spartanKick");
-      if (this.physical(h.s.dmg * n.mult, "bash", "Kick!", "spartanKick")) {
-        // Against the far wall the kicker bounces back instead, so the gap still opens,
-        // and the mob is slammed into the wall.
-        const slide = Math.min(n.push, ARENA.length - this.mob.x);
-        this.mob.push += slide;
-        h.push -= n.push - slide;
-        if (slide < n.push - 1e-9) {
-          this.mob.vuln = WALL_SLAM_TIME;
-          this.emit({ t: this.time, type: "status", target: "mob", label: "Wall Slam!" });
-        }
-      }
+      this.windUp("spartanKick");
       return true;
     }
     return false;
@@ -341,6 +329,21 @@ export class Battle {
       const c = this.combo("shieldBash");
       this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Bash!", "shieldBash");
       this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
+    }
+    if (skill === "spartanKick") {
+      const n = N.spartanKick(this.lv("spartanKick"));
+      this.combo("spartanKick");
+      if (this.physical(h.s.dmg * n.mult, "bash", "Kick!", "spartanKick")) {
+        // Against the far wall the kicker bounces back instead, so the gap still opens,
+        // and the mob is slammed into the wall.
+        const slide = Math.min(n.push, ARENA.length - this.mob.x);
+        this.mob.push += slide;
+        h.push -= n.push - slide;
+        if (slide < n.push - 1e-9) {
+          this.mob.vuln = WALL_SLAM_TIME;
+          this.emit({ t: this.time, type: "status", target: "mob", label: "Wall Slam!" });
+        }
+      }
     }
   }
 

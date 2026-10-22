@@ -23,6 +23,10 @@ const COMBO_PAUSE = 1.2;
 const COMBO_PAUSE_GAP = 4;
 /** Scene seconds between the combo hit and the freeze, so its impact is on screen. */
 const COMBO_PAUSE_DELAY = 0.08;
+/** Charge plays its run-up frames over this long while dashing (the dash itself is about as long). */
+const DASH_ANIM = 0.25;
+/** Skills whose clip is split into a run-up before the hit and a strike after it. */
+const splitClip = (id: SkillId) => WINDUP[id] !== undefined || id === "charge";
 /** Seconds a skill clip takes to play from the moment its hit lands. */
 const SKILL_ANIM = 0.5;
 const fx = (battle: Battle, side: Side) => px(side === "hero" ? battle.hero.x : battle.mob.x) + (side === "hero" ? -STANDOFF : STANDOFF);
@@ -179,7 +183,7 @@ export function playBattle(
         const attacker: Side = target === "mob" ? "hero" : "mob";
         const big = e.crit || (e.label !== undefined && e.label !== "Zap!");
         scene.anim[target].hurt = scene.now;
-        if (e.skill) scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: WINDUP[e.skill] ? "strike" : "full", simAt: e.t };
+        if (e.skill) scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: splitClip(e.skill) ? "strike" : "full", simAt: e.t };
         if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
           scene.anim[attacker].lunge = scene.now;
           scene.add({ kind: "slash", dur: 0.22, x: x - dir * 10, y, color: e.fx === "claw" ? "#ff9f9f" : "#ffffff", size: big ? 46 : 34, dir });
@@ -441,6 +445,10 @@ function draw(
     const enraged = side === "mob" && look.mobBoss && f.hp < f.s.maxHp / 2 && f.hp > 0;
     const frozen = side === "mob" && f.stun > 0 && battle.events.some((e) => e.type === "damage" && e.fx === "frost" && battle.time - e.t < 3);
     const id = side === "hero" ? look.hero : look.mob;
+    // The Charge dash plays the clip's run-up; the hit switches it to the strike.
+    if (side === "hero" && battle.dashing && (a.skill?.id !== "charge" || a.skill.phase !== "windup")) {
+      a.skill = { id: "charge", at: t, phase: "windup", simAt: battle.time };
+    }
     const layer = layers.get(side);
     const death = a.deathAt === null ? null : Math.min(1, (t - a.deathAt) / 0.7);
     layer.draw(id, {
@@ -497,7 +505,7 @@ function draw(
 function skillPose(s: FighterAnim["skill"], battle: Battle, t: number): Pose["skill"] {
   if (!s) return undefined;
   // The wind-up follows battle time, so it holds still through a freeze and ends as the hit lands.
-  if (s.phase === "windup") return { id: s.id, phase: s.phase, p: Math.min(1, (battle.time - s.simAt) / (WINDUP[s.id] ?? 1)) };
+  if (s.phase === "windup") return { id: s.id, phase: s.phase, p: Math.min(1, (battle.time - s.simAt) / (WINDUP[s.id] ?? DASH_ANIM)) };
   return t - s.at < SKILL_ANIM ? { id: s.id, phase: s.phase, p: (t - s.at) / SKILL_ANIM } : undefined;
 }
 

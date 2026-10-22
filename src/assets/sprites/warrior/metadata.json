@@ -28,6 +28,32 @@
           "south-west": "Idle/rotations/south-west.png"
         },
         "animations": {
+          "spartan_kick_knight_plants_his_left_foot_leans_his": {
+            "east": [
+              "Idle/animations/spartan_kick_knight_plants_his_left_foot_leans_his/east/frame_000.png",
+              "Idle/animations/spartan_kick_knight_plants_his_left_foot_leans_his/east/frame_001.png",
+              "Idle/animations/spartan_kick_knight_plants_his_left_foot_leans_his/east/frame_002.png",
+              "Idle/animations/spartan_kick_knight_plants_his_left_foot_leans_his/east/frame_003.png",
+              "Idle/animations/spartan_kick_knight_plants_his_left_foot_leans_his/east/frame_004.png",
+              "Idle/animations/spartan_kick_knight_plants_his_left_foot_leans_his/east/frame_005.png",
+              "Idle/animations/spartan_kick_knight_plants_his_left_foot_leans_his/east/frame_006.png",
+              "Idle/animations/spartan_kick_knight_plants_his_left_foot_leans_his/east/frame_007.png",
+              "Idle/animations/spartan_kick_knight_plants_his_left_foot_leans_his/east/frame_008.png"
+            ]
+          },
+          "charge_knight_dashes_forward_low_behind_his_round": {
+            "east": [
+              "Idle/animations/charge_knight_dashes_forward_low_behind_his_round/east/frame_000.png",
+              "Idle/animations/charge_knight_dashes_forward_low_behind_his_round/east/frame_001.png",
+              "Idle/animations/charge_knight_dashes_forward_low_behind_his_round/east/frame_002.png",
+              "Idle/animations/charge_knight_dashes_forward_low_behind_his_round/east/frame_003.png",
+              "Idle/animations/charge_knight_dashes_forward_low_behind_his_round/east/frame_004.png",
+              "Idle/animations/charge_knight_dashes_forward_low_behind_his_round/east/frame_005.png",
+              "Idle/animations/charge_knight_dashes_forward_low_behind_his_round/east/frame_006.png",
+              "Idle/animations/charge_knight_dashes_forward_low_behind_his_round/east/frame_007.png",
+              "Idle/animations/charge_knight_dashes_forward_low_behind_his_round/east/frame_008.png"
+            ]
+          },
           "Walk": {
             "east": [
               "Idle/animations/Walk/east/frame_000.png",
@@ -49,19 +75,6 @@
               "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_006.png",
               "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_007.png",
               "Idle/animations/death_knight_is_struck_and_staggers_back_a_step_kn/east/frame_008.png"
-            ]
-          },
-          "shield-bash_knight_lunges_forward_leading_with_the": {
-            "east": [
-              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_000.png",
-              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_001.png",
-              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_002.png",
-              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_003.png",
-              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_004.png",
-              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_005.png",
-              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_006.png",
-              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_007.png",
-              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_008.png"
             ]
           },
           "heavy-strike": {
@@ -88,6 +101,19 @@
               "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_006.png",
               "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_007.png",
               "Idle/animations/overhead_sword_slash_knight_raises_the_longsword_i/east/frame_008.png"
+            ]
+          },
+          "shield-bash_knight_lunges_forward_leading_with_the": {
+            "east": [
+              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_000.png",
+              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_001.png",
+              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_002.png",
+              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_003.png",
+              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_004.png",
+              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_005.png",
+              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_006.png",
+              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_007.png",
+              "Idle/animations/shield-bash_knight_lunges_forward_leading_with_the/east/frame_008.png"
             ]
           }
         }
@@ -124,5 +150,5 @@
     }
   ],
   "export_version": "3.1",
-  "export_date": "2026-10-22T06:13:45.187060"
+  "export_date": "2026-10-22T08:06:25.135352"
 }
