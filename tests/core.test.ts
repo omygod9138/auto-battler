@@ -115,6 +115,13 @@ describe("battle", () => {
     expect(b.events.some((e) => e.type === "dot" && e.kind === "burn")).toBe(true);
   });
 
+  it("tags skill hits with their skill", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, heavyStrike: 1, shieldBash: 1 }, dummy, 1);
+    for (let i = 0; i < 400; i++) b.step();
+    const skills = new Set(b.events.flatMap((e) => (e.type === "damage" && e.skill ? [e.skill] : [])));
+    expect([...skills].sort()).toEqual(["charge", "heavyStrike", "shieldBash"]);
+  });
+
   it("times out as a loss", () => {
     expect(new Battle(CLASSES.warrior.base, {}, stats({ maxHp: 1e9, dmg: 0, interval: 99, range: 1, speed: 1 }), 1).runToEnd()).toBe("loss");
   });

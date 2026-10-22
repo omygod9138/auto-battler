@@ -2,6 +2,8 @@
 // src/assets/sprites/<character id>/ (metadata.json plus its PNG folders) and
 // that character is drawn from the art instead of the procedural rig.
 
+import { SKILLS, type SkillId } from "../core/skills";
+
 export type SpriteAnim = "idle" | "walk" | "attack" | "hurt" | "death";
 
 /** Frames drawn centred horizontally with row `foot` on the ground. PixelLab pads each animation's canvas differently, so every clip carries its own anchor. */
@@ -15,6 +17,8 @@ export interface SpriteSet {
   /** Still, right-facing pose; used whenever an animation is missing. */
   still: Clip;
   anims: Partial<Record<SpriteAnim, Clip>>;
+  /** Clips named after a skill, played when that skill lands a hit. */
+  skills: Partial<Record<SkillId, Clip>>;
   /** Height of the still's opaque art above the feet. */
   visible: number;
 }
@@ -44,6 +48,13 @@ const ROLES: [SpriteAnim, RegExp][] = [
   ["walk", /walk|run|march|move/i],
   ["idle", /idle|breath|stand/i],
 ];
+
+/** A clip whose name starts with a skill's name or id ("heavy-strike", "Shield Bash ...") belongs to that skill. */
+const flat = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+export function skillFor(name: string): SkillId | undefined {
+  const n = flat(name);
+  return (Object.keys(SKILLS) as SkillId[]).find((id) => n.startsWith(flat(id)) || n.startsWith(flat(SKILLS[id].name)));
+}
 
 const sets = new Map<string, SpriteSet>();
 
@@ -100,20 +111,27 @@ async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | n
   const url = (path: string) => pngs[`${dir}/${path}`];
   const states = meta.states ?? [];
   const anims: SpriteSet["anims"] = {};
+  const skills: SpriteSet["skills"] = {};
   // An export can hold several characters; gather animations from all of them.
   for (const state of states) {
     for (const [name, entry] of Object.entries(state.frames?.animations ?? {})) {
-      const role = ROLES.find(([, re]) => re.test(name))?.[0];
-      if (!role || anims[role]) continue;
       const urls = eastFrames(entry).map(url).filter((u): u is string => !!u);
-      if (urls.length) anims[role] = await loadClip(urls);
+      if (!urls.length) continue;
+      // Skill names win over roles: "heavy strike" would otherwise read as a plain attack.
+      const skill = skillFor(name);
+      if (skill) {
+        skills[skill] ??= await loadClip(urls);
+        continue;
+      }
+      const role = ROLES.find(([, re]) => re.test(name))?.[0];
+      if (role && !anims[role]) anims[role] = await loadClip(urls);
     }
   }
   const stillUrl = states.map((st) => url(st.frames?.rotations?.east ?? "")).find((u) => !!u);
   const still = stillUrl ? await loadClip([stillUrl]) : anims.idle;
   if (!still) return null;
   const { top, bottom } = opaqueRows(still.frames[0]);
-  return { still, anims, visible: bottom + 1 - top };
+  return { still, anims, skills, visible: bottom + 1 - top };
 }
 
 let loading: Promise<void> | null = null;

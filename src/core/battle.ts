@@ -23,7 +23,7 @@ export type FxKind = "slash" | "arrow" | "bolt" | "fireball" | "frost" | "meteor
 
 /** What happened during a tick, for floating numbers and projectiles. */
 export type BattleEvent =
-  | { t: number; type: "damage"; target: Side; amount: number; crit: boolean; fx: FxKind; label?: string }
+  | { t: number; type: "damage"; target: Side; amount: number; crit: boolean; fx: FxKind; label?: string; skill?: SkillId }
   | { t: number; type: "dot"; target: Side; amount: number; kind: "poison" | "burn" | "thorns" }
   | { t: number; type: "heal"; target: Side; amount: number }
   | { t: number; type: "dodge"; target: Side }
@@ -187,30 +187,32 @@ export class Battle {
   private castActives(dist: number): void {
     const h = this.hero;
     const ready = (id: SkillId) => this.lv(id) > 0 && this.cds.get(id) === 0;
-    if (ready("frostNova") && dist <= h.s.range) {
+    // Same tolerance as movement: fighters stop at range plus float error.
+    const inRange = dist <= h.s.range + 1e-6;
+    if (ready("frostNova") && inRange) {
       const n = N.frostNova(this.lv("frostNova"));
       this.cds.set("frostNova", this.cooldown("frostNova"));
       this.mob.stun = Math.max(this.mob.stun, n.freeze);
-      this.spell(h.s.dmg * n.mult, "frost", "Frost Nova");
+      this.spell(h.s.dmg * n.mult, "frost", "Frost Nova", "frostNova");
     }
-    if (ready("meteor") && dist <= h.s.range) {
+    if (ready("meteor") && inRange) {
       this.cds.set("meteor", this.cooldown("meteor"));
-      this.spell(h.s.dmg * N.meteor(this.lv("meteor")).mult, "meteor", "Meteor!");
+      this.spell(h.s.dmg * N.meteor(this.lv("meteor")).mult, "meteor", "Meteor!", "meteor");
     }
-    if (ready("fireball") && dist <= h.s.range) {
+    if (ready("fireball") && inRange) {
       const n = N.fireball(this.lv("fireball"));
       this.cds.set("fireball", this.cooldown("fireball"));
-      this.spell(h.s.dmg * n.mult, "fireball", "Fireball");
+      this.spell(h.s.dmg * n.mult, "fireball", "Fireball", "fireball");
       this.addBurn(n.burn, 3);
     }
-    if (ready("headshot") && dist <= h.s.range) {
+    if (ready("headshot") && inRange) {
       this.cds.set("headshot", this.cooldown("headshot"));
-      this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!");
+      this.physical(h.s.dmg * N.headshot(this.lv("headshot")).mult, "arrow", "Headshot!", "headshot");
     }
-    if (ready("shieldBash") && dist <= h.s.range) {
+    if (ready("shieldBash") && inRange) {
       const n = N.shieldBash(this.lv("shieldBash"));
       this.cds.set("shieldBash", this.cooldown("shieldBash"));
-      this.physical(h.s.dmg * n.mult, "bash", "Bash!");
+      this.physical(h.s.dmg * n.mult, "bash", "Bash!", "shieldBash");
       this.mob.stun = Math.max(this.mob.stun, n.stun);
     }
   }
@@ -225,21 +227,24 @@ export class Battle {
     this.hits++;
     let mult = 1;
     let label: string | undefined;
+    let skill: SkillId | undefined;
     if (this.hits === 1 && this.lv("charge")) {
       const c = N.charge(this.lv("charge"));
       mult *= c.mult;
       this.mob.stun = Math.max(this.mob.stun, c.stun);
       label = "Charge!";
+      skill = "charge";
     }
     if (this.lv("heavyStrike")) {
       const hs = N.heavyStrike(this.lv("heavyStrike"));
       if (this.hits % hs.every === 0) {
         mult *= hs.mult;
         label = "Heavy Strike!";
+        skill = "heavyStrike";
       }
     }
     const fx: FxKind = h.s.magic ? "bolt" : h.s.range > 2 ? "arrow" : "slash";
-    const landed = this.physical(h.s.dmg * mult, fx, label);
+    const landed = this.physical(h.s.dmg * mult, fx, label, skill);
     if (!landed) return;
 
     if (this.lv("multishot")) {
@@ -261,7 +266,7 @@ export class Battle {
   }
 
   /** Physical or magic basic damage. Returns false if dodged. */
-  private physical(raw: number, fx: FxKind, label?: string): boolean {
+  private physical(raw: number, fx: FxKind, label?: string, skill?: SkillId): boolean {
     const h = this.hero;
     const m = this.mob;
     if (!h.s.magic && this.rng.next() < m.s.dodge) {
@@ -272,14 +277,14 @@ export class Battle {
     let dmg = raw * (crit ? h.s.critMult : 1) * this.execute();
     if (!h.s.magic) dmg = Math.max(1, dmg - m.s.armor);
     if (h.s.magic) dmg *= h.s.spellPower;
-    this.dealToMob(dmg, crit, fx, label);
+    this.dealToMob(dmg, crit, fx, label, skill);
     return true;
   }
 
   /** Spells never miss and ignore armor. */
-  private spell(raw: number, fx: FxKind, label: string): void {
+  private spell(raw: number, fx: FxKind, label: string, skill?: SkillId): void {
     const crit = this.rng.next() < this.hero.s.crit;
-    this.dealToMob(raw * this.hero.s.spellPower * (crit ? this.hero.s.critMult : 1) * this.execute(), crit, fx, label);
+    this.dealToMob(raw * this.hero.s.spellPower * (crit ? this.hero.s.critMult : 1) * this.execute(), crit, fx, label, skill);
   }
 
   private execute(): number {
@@ -288,9 +293,9 @@ export class Battle {
     return this.mob.hp < this.mob.s.maxHp * e.below ? e.mult : 1;
   }
 
-  private dealToMob(dmg: number, crit: boolean, fx: FxKind, label?: string): void {
+  private dealToMob(dmg: number, crit: boolean, fx: FxKind, label?: string, skill?: SkillId): void {
     this.mob.hp -= dmg;
-    this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label });
+    this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label, skill });
     const heal = dmg * (this.hero.s.lifesteal + (this.lv("bloodlust") ? N.bloodlust(this.lv("bloodlust")) : 0));
     this.healHero(heal);
     this.checkDeath();
