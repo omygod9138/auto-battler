@@ -2,7 +2,7 @@
 // round's mob, slow time down, and read a log of skill hits and combos.
 import { Battle, type BattleEvent } from "../core/battle";
 import { mobForRound } from "../core/mobs";
-import { COMBOS, MAX_LEVEL, SKILLS, heroStats, type SkillId, type SkillLevels } from "../core/skills";
+import { COMBOS, MAX_LEVEL, comboEffect, SKILLS, heroStats, type SkillId, type SkillLevels } from "../core/skills";
 import { CLASSES, stats, type ClassId } from "../core/stats";
 import { playBattle } from "./battleView";
 
@@ -69,7 +69,7 @@ export function startSandbox(app: HTMLElement): void {
   const render = () => {
     stop?.();
     stop = null;
-    const combos = COMBOS.map((c) => `${c.seq.map((id) => SKILLS[id].name).join(" → ")}: ${c.label.replace("Combo! ", "")}`).join("<br>");
+    const combos = COMBOS.map((c) => `${c.pair.map((id) => SKILLS[id].name).join(" → ")}: ${comboEffect(c)}`).join("<br>");
     app.innerHTML = `
       <div class="sandbox">
         <h2>🧪 Sandbox <a class="muted" href="./">back to game</a></h2>
@@ -90,7 +90,7 @@ export function startSandbox(app: HTMLElement): void {
         <div class="battle-bar"><div class="cds" id="cds"></div><div id="sb-status" class="muted"></div></div>
         <div class="sb-bottom">
           <div class="panel"><h3>Log</h3><ol id="sb-log" class="sb-log"></ol></div>
-          <div class="panel"><h3>Combos</h3><p class="muted">Each step within 4s of the last.</p>${combos}</div>
+          <div class="panel"><h3>Combos</h3><p class="muted">Second skill within 4s of the first. Pairs chain.</p>${combos}</div>
         </div>
       </div>`;
     fight();

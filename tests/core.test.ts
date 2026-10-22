@@ -205,10 +205,24 @@ describe("battle", () => {
     for (const d of after) expect(d).toBeCloseTo(12, 5);
   });
 
-  it("no combo without the opener", () => {
+  it("shield bash then heavy strike is a combo on its own, no charge needed", () => {
     const b = new Battle(CLASSES.warrior.base, { shieldBash: 1, heavyStrike: 1 }, dummy, 1);
     for (let i = 0; i < 400; i++) b.step();
+    const labels = b.events.flatMap((e) => (e.type === "status" ? [e.label] : []));
+    expect(labels).toContain("Combo! +33%");
+    expect(labels).not.toContain("Combo! Stun ×2");
+  });
+
+  it("no combo from a single skill", () => {
+    const b = new Battle(CLASSES.warrior.base, { heavyStrike: 1 }, dummy, 1);
+    for (let i = 0; i < 400; i++) b.step();
     expect(b.events.some((e) => e.type === "status" && e.label.startsWith("Combo"))).toBe(false);
+  });
+
+  it("combo descriptions come from the combo list", () => {
+    expect(SKILLS.heavyStrike.desc(1)).toContain("after Shield Bash: +33% damage");
+    expect(SKILLS.shieldBash.desc(1)).toContain("after Charge: stun ×2; Heavy Strike next: +33% damage");
+    expect(SKILLS.spartanKick.desc(1)).toContain("Charge next: stun +3s");
   });
 
   it("times out as a loss", () => {

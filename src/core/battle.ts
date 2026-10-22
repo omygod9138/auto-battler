@@ -65,9 +65,9 @@ export class Battle {
   private chargedAt = -99;
   /** The hero is mid Charge dash. */
   dashing = false;
-  /** Recent attack skills, for combos. */
-  private chain: SkillId[] = [];
-  private chainAt = -99;
+  /** The last attack skill and when it landed, for combos. */
+  private lastSkill: SkillId | null = null;
+  private lastSkillAt = -99;
   private cds = new Map<SkillId, number>();
   private poison: Dot[] = [];
   private burn: Dot[] = [];
@@ -299,9 +299,10 @@ export class Battle {
 
   /** Record an attack skill and return the combo it completes, if any. */
   private combo(skill: SkillId): Combo | undefined {
-    this.chain = this.time - this.chainAt <= COMBO_WINDOW ? [...this.chain, skill] : [skill];
-    this.chainAt = this.time;
-    const c = COMBOS.find(({ seq }) => seq.length <= this.chain.length && seq.every((id, i) => this.chain[this.chain.length - seq.length + i] === id));
+    const prev = this.time - this.lastSkillAt <= COMBO_WINDOW ? this.lastSkill : null;
+    this.lastSkill = skill;
+    this.lastSkillAt = this.time;
+    const c = COMBOS.find(({ pair }) => pair[0] === prev && pair[1] === skill);
     if (c) this.emit({ t: this.time, type: "status", target: "hero", label: c.label });
     return c;
   }
