@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ARENA, Battle, SKILL_RECOVERY, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
-import { COMBOS, MAX_LEVEL, SKILLS, heroStats } from "../src/core/skills";
+import { COMBOS, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
 import { CLASSES, stats } from "../src/core/stats";
 
 const dummy = stats({ maxHp: 1000, dmg: 0, interval: 99, range: 1.2, speed: 0 });
@@ -151,13 +151,15 @@ describe("battle", () => {
     expect(b.distance).toBeLessThanOrEqual(1.3 + 1e-6);
   });
 
-  it("spartan kick knocks back 2m, then charge combos for +3s stun", () => {
+  it("spartan kick knocks the mob back, then charge combos for +3s stun", () => {
     const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1 }, dummy, 1);
+    // Away from the far wall, so the whole knockback goes to the mob.
+    b.mob.x = 12;
     const x0 = b.mob.x;
     for (let i = 0; i < 600 && !b.events.some((e) => e.type === "damage" && e.skill === "spartanKick"); i++) b.step();
     while (b.mob.push !== 0) b.step();
     // The dummy never walks, so all of its movement is the knockback.
-    expect(b.mob.x - x0).toBeCloseTo(2, 5);
+    expect(b.mob.x - x0).toBeCloseTo(SKILL_NUM.spartanKick(1).push, 5);
     let stun = 0;
     for (let i = 0; i < 100 && !stun; i++) {
       const before = b.events.length;

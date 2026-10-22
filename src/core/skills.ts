@@ -70,7 +70,8 @@ export const SKILL_NUM = {
   secondWind: (lv: number) => 0.25 + 0.15 * lv,
   // Same cooldown as Shield Bash, so every Charge can be followed by a Bash.
   charge: (lv: number) => ({ cd: 6, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
-  spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 2 }),
+  // Far enough that the Charge after it gets a proper run-up, still inside Charge's 6m range.
+  spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 4 }),
   multishot: (lv: number) => ({ arrows: lv, mult: 0.5 }),
   poison: (lv: number) => ({ dps: 1 + 1.5 * lv, dur: 4, maxStacks: 3 + 2 * lv }),
   knockback: (lv: number) => ({ chance: 0.25 + 0.1 * lv, dist: 1.5 }),
