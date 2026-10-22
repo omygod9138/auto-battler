@@ -121,11 +121,53 @@ describe("battle", () => {
     expect(heals).toBe(hits);
   });
 
-  it("frost nova freezes and fireball burns", () => {
-    const b = new Battle(CLASSES.mage.base, { frostNova: 1, fireball: 1 }, dummy, 1);
-    for (let i = 0; i < 200; i++) b.step();
-    expect(b.events.some((e) => e.type === "damage" && e.label === "Frost Nova")).toBe(true);
+  it("fireball burns and marks the mob with fire", () => {
+    const b = new Battle(CLASSES.mage.base, { fireball: 1 }, dummy, 1);
+    while (!b.events.some((e) => e.type === "damage" && e.skill === "fireball")) b.step();
+    expect(b.mark?.el).toBe("fire");
+    for (let i = 0; i < 20; i++) b.step();
     expect(b.events.some((e) => e.type === "dot" && e.kind === "burn")).toBe(true);
+  });
+
+  it("fire + earth leaves lava that burns and slows the mob standing in it", () => {
+    const walker = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 2 });
+    const b = new Battle(CLASSES.mage.base, { fireball: 1, stoneSpike: 1 }, walker, 1);
+    while (!b.events.some((e) => e.type === "status" && e.label.endsWith("Lava!"))) b.step();
+    expect(b.derived?.kind).toBe("lava");
+    expect(b.mark).toBeNull();
+    expect(b.zone()?.slow).toBe(0.4);
+  });
+
+  it("tier 2: lava + water hardens into Obsidian", () => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 4, speed: 0 });
+    const b = new Battle(CLASSES.mage.base, { fireball: 1, stoneSpike: 1, tidalWave: 1 }, wall, 1);
+    b.derived = { kind: "lava", left: 4, x: b.mob.x };
+    expect(b.reactionFor("water")?.name).toBe("Obsidian");
+    expect(b.reactionFor("fire")).toBeUndefined();
+    b.mark = { el: "fire", left: 4 };
+    // Mob walked out of the lava: only the mark reacts.
+    b.mob.x -= 3;
+    expect(b.reactionFor("water")?.name).toBe("Steam");
+  });
+
+  it("water + air is a Storm: lightning burst and a short stun", () => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 4, speed: 0 });
+    const b = new Battle(CLASSES.mage.base, { tidalWave: 1, gust: 1 }, wall, 1);
+    for (let i = 0; i < 30 * 20; i++) b.step();
+    expect(b.events.some((e) => e.type === "damage" && e.label === "Storm" && e.fx === "lightning")).toBe(true);
+  });
+
+  it("smart-cast holds a spell that wouldn't react while a reacting one is about to be ready", () => {
+    const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 4, speed: 0 });
+    const b = new Battle(CLASSES.mage.base, { fireball: 1, stoneSpike: 1 }, wall, 1);
+    b.mob.x = b.hero.x + 5;
+    b.mark = { el: "fire", left: 4 };
+    const cds = (b as unknown as { cds: Map<string, number> }).cds;
+    cds.set("fireball", 0);
+    cds.set("stoneSpike", 0.5);
+    while (!b.events.some((e) => e.type === "windup")) b.step();
+    expect(b.events.find((e) => e.type === "windup")).toMatchObject({ skill: "stoneSpike" });
+    expect(b.time).toBeGreaterThan(0.45);
   });
 
   it("tags skill hits with their skill", () => {
@@ -268,13 +310,13 @@ describe("battle", () => {
     expect(new Set(heavies)).toEqual(new Set(["shieldBash"]));
   });
 
-  it("static charge fires on its cooldown", () => {
+  it("gust fires on its cooldown", () => {
     const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 4, speed: 0 });
-    const b = new Battle(CLASSES.mage.base, { static: 1 }, wall, 1);
+    const b = new Battle(CLASSES.mage.base, { gust: 1 }, wall, 1);
     for (let i = 0; i < 40 * 20; i++) b.step();
-    const zaps = b.events.filter((e) => e.type === "damage" && e.label === "Zap!").map((e) => e.t);
-    expect(zaps.length).toBeGreaterThan(5);
-    for (let i = 1; i < zaps.length; i++) expect(zaps[i] - zaps[i - 1]).toBeGreaterThanOrEqual(4 - 1e-6);
+    const gusts = b.events.filter((e) => e.type === "damage" && e.skill === "gust").map((e) => e.t);
+    expect(gusts.length).toBeGreaterThan(5);
+    for (let i = 1; i < gusts.length; i++) expect(gusts[i] - gusts[i - 1]).toBeGreaterThanOrEqual(4 - 1e-6);
   });
 
   it.each([1, 2, 3])("never fires a skill and another attack together (seed %i)", (seed) => {
@@ -293,7 +335,7 @@ describe("battle", () => {
 
   it.each([
     ["warrior", { charge: 2, spartanKick: 2, shieldBash: 2, heavyStrike: 2 }],
-    ["mage", { fireball: 2, frostNova: 2, meteor: 2, static: 2 }],
+    ["mage", { fireball: 2, gust: 2, tidalWave: 2, stoneSpike: 2 }],
     ["ranger", { headshot: 3, rapidFire: 3 }],
   ] as const)("%s never starts a skill right on top of another attack", (cls, levels) => {
     const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });

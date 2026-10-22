@@ -1,5 +1,5 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
-import { SKILLS, type SkillId } from "../core/skills";
+import { DERIVED, ELEMENT_ICON, SKILLS, type SkillId } from "../core/skills";
 import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Pose } from "./characters";
 
 const W = 880;
@@ -174,7 +174,7 @@ export function playBattle(
     switch (e.type) {
       case "damage": {
         const attacker: Side = target === "mob" ? "hero" : "mob";
-        const big = e.crit || (e.label !== undefined && e.label !== "Zap!");
+        const big = e.crit || e.label !== undefined;
         scene.anim[target].hurt = scene.now;
         if (e.skill) {
           // After its wind-up a clip plays the strike part; a skill that never wound up plays it whole.
@@ -229,7 +229,7 @@ export function playBattle(
         scene.anim.hero.skill = { id: e.skill, at: scene.now, phase: "windup", simAt: e.t, simEnd: e.at };
         break;
       case "status":
-        if (e.label.startsWith("Combo")) {
+        if (e.reaction || e.label.startsWith("Combo")) {
           // The pause before the hit already showed this banner; don't pop it again.
           if (scene.banner?.text === e.label && scene.real - scene.banner.born < COMBO_PAUSE + 0.6) break;
           scene.banner = { text: e.label, born: scene.real };
@@ -332,10 +332,22 @@ function impact(scene: Scene, fx: FxKind, x: number, y: number, big: boolean): v
         scene.add({ kind: "ring", dur: 0.35, x, y, color: "#ffb347", size: 46, dir: 1 });
       });
       break;
-    case "frost":
+    case "water":
       at(() => {
-        scene.burst(x, y, 24, "#bfe8ff", 180, 120, 4);
-        scene.add({ kind: "ring", dur: 0.5, x, y, color: "#9fe0ff", size: 70, dir: 1 });
+        scene.burst(x, y, 24, "#7fc8ff", 180, 300, 4);
+        scene.add({ kind: "ring", dur: 0.5, x, y, color: "#5fb0ff", size: 70, dir: 1 });
+      });
+      break;
+    case "wind":
+      at(() => {
+        scene.burst(x, y, 16, "rgba(210,255,240,0.8)", 220, 0, 3);
+        scene.add({ kind: "ring", dur: 0.3, x, y, color: "#bff5e6", size: 40, dir: 1 });
+      });
+      break;
+    case "stone":
+      at(() => {
+        scene.burst(x, GROUND - 6, 22, "rgba(160,125,80,0.95)", 200, 500, 5);
+        scene.add({ kind: "ring", dur: 0.35, x, y: GROUND - 6, color: "#c9a06a", size: 50, dir: 1 });
       });
       break;
     case "lightning":
@@ -419,6 +431,8 @@ function draw(
     ctx.fillText("🪤", sx, GROUND + 20 + (battle.mob.root > 0 ? Math.sin(t * 40) * 2 : 0));
   }
 
+  drawElements(ctx, battle, t);
+
   for (const side of ["hero", "mob"] as const) {
     const f = side === "hero" ? battle.hero : battle.mob;
     const a = scene.anim[side];
@@ -434,7 +448,7 @@ function draw(
     const recoil = hurt >= 0 ? (1 - hurt) * -7 * facing : 0;
     const x = fx(battle, side) + lunge + recoil;
     const enraged = side === "mob" && look.mobBoss && f.hp < f.s.maxHp / 2 && f.hp > 0;
-    const frozen = side === "mob" && f.stun > 0 && battle.events.some((e) => e.type === "damage" && e.fx === "frost" && battle.time - e.t < 3);
+    const frozen = side === "mob" && f.stun > 0 && battle.events.some((e) => e.type === "status" && e.label.endsWith("Obsidian!") && battle.time - e.t < 3);
     const id = side === "hero" ? look.hero : look.mob;
     const layer = layers.get(side);
     const death = a.deathAt === null ? null : Math.min(1, (t - a.deathAt) / 0.7);
@@ -532,6 +546,44 @@ function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 
       break;
     default:
       scene.shake = Math.max(scene.shake, 5);
+  }
+}
+
+/** Mage element state: ground zones under the mob, clouds around it, and the waiting mark above it. */
+function drawElements(ctx: CanvasRenderingContext2D, battle: Battle, t: number): void {
+  const d = battle.derived;
+  if (d) {
+    const def = DERIVED[d.kind];
+    const fade = Math.min(1, d.left / 0.5);
+    if (def.zone) {
+      const x0 = px(d.x - def.zone);
+      const x1 = px(d.x + def.zone);
+      const color = d.kind === "lava" ? "255,90,30" : "120,85,50";
+      ctx.fillStyle = `rgba(${color},${0.55 * fade})`;
+      ctx.beginPath();
+      ctx.ellipse((x0 + x1) / 2, GROUND + 6, (x1 - x0) / 2, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      if (d.kind === "lava") {
+        ctx.fillStyle = `rgba(255,200,80,${0.5 * fade * (0.6 + 0.4 * Math.sin(t * 6))})`;
+        ctx.beginPath();
+        ctx.ellipse((x0 + x1) / 2, GROUND + 6, (x1 - x0) / 3, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      ctx.globalAlpha = fade;
+      ctx.font = "26px sans-serif";
+      ctx.textAlign = "center";
+      const mx = fx(battle, "mob");
+      ctx.fillText(def.icon, mx + Math.sin(t * 3) * 14, GROUND - 110);
+      ctx.globalAlpha = 1;
+    }
+  }
+  if (battle.mark) {
+    ctx.globalAlpha = Math.min(1, battle.mark.left / 0.5);
+    ctx.font = "18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(ELEMENT_ICON[battle.mark.el], fx(battle, "mob") + 26, GROUND - 92 + Math.sin(t * 4) * 3);
+    ctx.globalAlpha = 1;
   }
 }
 
@@ -805,8 +857,14 @@ function drawShots(ctx: CanvasRenderingContext2D, scene: Scene, battle: Battle, 
         glow(ctx, x, y, 16, "#ffd27a");
         if (Math.random() < 0.6) scene.particles.push({ x, y, vx: rand(-20, 20), vy: rand(-40, -10), life: 0, max: 0.4, size: 4, color: "#ffb347", gravity: -50 });
         break;
-      case "frost":
-        glyph(ctx, "❄️", x, y, 22, 1);
+      case "water":
+        glyph(ctx, "🌊", x, y, 24, 1);
+        break;
+      case "wind":
+        glyph(ctx, "🌀", x, y, 22, 0.9);
+        break;
+      case "stone":
+        glyph(ctx, "🪨", x, y, 20, 1);
         break;
       default:
         break;
