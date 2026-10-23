@@ -11,7 +11,7 @@ npm run build
 
 Live: https://omygod9138.github.io/auto-battler/ (deployed by `.github/workflows/pages.yml` on every push to `main`).
 
-Portals (itch.io, CrazyGames): `npm run build:portal` builds `dist-portal/` with relative paths; zip its contents (`index.html` at the zip root). `.github/workflows/portal.yml` also uploads it as the `portal-build` artifact on every push to `main`.
+Portals (itch.io, CrazyGames): `npm run build:portal` builds `dist-portal/` with relative paths; zip its contents (`index.html` at the zip root). `.github/workflows/portal.yml` also uploads it as the `portal-build` artifact on every push to `main`, and pushes it to https://yuusha-games.itch.io/fjordbattle via butler when the `BUTLER_API_KEY` secret is set.
 
 ## Loop
 

@@ -10,6 +10,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,3 +27,10 @@ jobs:
         with:
           name: portal-build
           path: dist-portal
+      # Push to itch.io (yuusha-games/fjordbattle) when the BUTLER_API_KEY secret is set.
+      - name: Push to itch.io
+        if: env.BUTLER_API_KEY != ''
+        run: |
+          curl -sSL -o butler.zip https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default
+          unzip -q butler.zip -d butler && chmod +x butler/butler
+          ./butler/butler push dist-portal yuusha-games/fjordbattle:html5 --userversion "$(git rev-parse --short HEAD)"
