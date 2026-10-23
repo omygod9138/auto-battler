@@ -1,4 +1,5 @@
 import type { Battle } from "./core/battle";
+import { LocalLeaderboard, TOP_N, cleanName, type Leaderboard, type ScoreEntry } from "./core/leaderboard";
 import { MAX_LEVEL, SKILLS, type SkillCat, type SkillId, type SkillKind } from "./core/skills";
 import { CLASSES, type ClassId, type Stats } from "./core/stats";
 import {
@@ -22,6 +23,33 @@ let run: RunState | null = null;
 let battle: Battle | null = null;
 let stopBattle: (() => void) | null = null;
 let battleSpeed = 1;
+// Swap for an online backend later; the UI only sees the Leaderboard interface.
+const leaderboard: Leaderboard = new LocalLeaderboard(localStorage);
+/** Title-screen leaderboard view: null = class picker, "all" or a class = board tab. */
+let boardTab: ClassId | "all" | null = null;
+/** The run that just ended, for highlighting it on the game-over board. */
+let lastScore: { entry: ScoreEntry; rank: number | null; board: ScoreEntry[] } | null = null;
+const NAME_KEY = "fjord-player-name";
+
+function playerName(): string {
+  try {
+    return localStorage.getItem(NAME_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function setPlayerName(name: string): void {
+  try {
+    localStorage.setItem(NAME_KEY, cleanName(name));
+  } catch {
+    // ignore
+  }
+}
+
+function esc(t: string): string {
+  return t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
 
 const BEST_KEY = "fjord-best-v2";
 
@@ -46,6 +74,10 @@ const KIND_LABEL: Record<SkillKind, string> = { passive: "Passive", proc: "On hi
 const CAT_LABEL: Record<SkillCat, string> = { attack: "⚔️ Attack", defense: "🛡️ Defense", passive: "✨ Passive" };
 
 function render(): void {
+  if (!run && boardTab) {
+    void renderBoard(boardTab);
+    return;
+  }
   if (!run) return renderTitle();
   if (run.phase === "choose") return renderChoose(run);
   if (run.phase === "battle") return renderBattle(run);
@@ -59,6 +91,10 @@ function renderTitle(): void {
       <h1>⚔️ Fjord Battlegrounds</h1>
       <p class="sub">Pick a skill. Beat the mob. Each win brings a stronger one. One loss and it's over.</p>
       ${import.meta.env.DEV ? `<p><a href="?sandbox">🧪 Sandbox</a> <span class="muted">(dev only)</span></p>` : ""}
+      <div class="row name-row">
+        <label>Name <input id="player-name" maxlength="16" placeholder="Hero" value="${esc(playerName())}"></label>
+        <button data-action="board" data-id="all">🏆 Leaderboard</button>
+      </div>
       <div class="cards three">
         ${(Object.keys(CLASSES) as ClassId[])
           .map((id) => {
@@ -73,6 +109,50 @@ function renderTitle(): void {
           })
           .join("")}
       </div>
+    </div>`;
+}
+
+function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true): string {
+  if (!list.length) return `<p class="muted">No runs yet. Go set a score!</p>`;
+  const rows = list
+    .map((e, i) => {
+      const skills = e.skills
+        .map(([id, lv]) => (SKILLS[id] ? `<span title="${SKILLS[id].name} ${lv}">${SKILLS[id].icon}<sub>${lv}</sub></span>` : ""))
+        .join("");
+      const me = highlight && e.at === highlight.at && e.name === highlight.name ? "me" : "";
+      return `<tr class="${me}">
+        <td class="rank">${["🥇", "🥈", "🥉"][i] ?? i + 1}</td>
+        <td>${esc(e.name)}</td>
+        ${showClass ? `<td>${CLASSES[e.cls]?.icon ?? ""} ${CLASSES[e.cls]?.name ?? e.cls}</td>` : ""}
+        <td class="num"><b>${e.wins}</b></td>
+        <td class="skills">${skills}</td>
+        <td class="muted">${esc(e.killedBy)}</td>
+        <td class="muted">${new Date(e.at).toLocaleDateString()}</td>
+      </tr>`;
+    })
+    .join("");
+  return `<div class="board-wrap"><table class="board">
+    <thead><tr><th>#</th><th>Name</th>${showClass ? "<th>Class</th>" : ""}<th>Wins</th><th>Build</th><th>Fell to</th><th>Date</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+async function renderBoard(tab: ClassId | "all"): Promise<void> {
+  const list = await leaderboard.top(tab === "all" ? undefined : tab);
+  if (boardTab !== tab || run) return;
+  const tabs = (["all", ...Object.keys(CLASSES)] as (ClassId | "all")[])
+    .map(
+      (id) =>
+        `<button class="tab ${id === tab ? "on" : ""}" data-action="board" data-id="${id}">${id === "all" ? "All" : `${CLASSES[id].icon} ${CLASSES[id].name}`}</button>`,
+    )
+    .join("");
+  app.innerHTML = `
+    <div class="title-screen">
+      <h1>🏆 Leaderboard</h1>
+      <p class="sub">Top ${TOP_N} runs on this device, by wins.</p>
+      <div class="row tabs">${tabs}</div>
+      <section class="panel">${boardTable(list)}</section>
+      <div class="row"><button data-action="title">⬅ Back</button></div>
     </div>`;
 }
 
@@ -209,8 +289,26 @@ function afterBattle(): void {
   stopBattle = null;
   finishBattle(s, battle!.outcome === "win");
   battle = null;
-  if (s.phase === "over") saveBest(s.cls, s.round - 1);
-  render();
+  if (s.phase !== "over") return render();
+  saveBest(s.cls, s.round - 1);
+  void recordScore(s).finally(render);
+}
+
+async function recordScore(s: RunState): Promise<void> {
+  const entry: ScoreEntry = {
+    name: playerName() || "Hero",
+    cls: s.cls,
+    wins: s.round - 1,
+    killedBy: currentMob(s).def.name,
+    skills: Object.entries(s.levels) as [SkillId, number][],
+    at: Date.now(),
+  };
+  try {
+    const rank = await leaderboard.submit(entry, s.cls);
+    lastScore = { entry, rank, board: await leaderboard.top(s.cls) };
+  } catch {
+    lastScore = null;
+  }
 }
 
 function renderOver(s: RunState): void {
@@ -220,6 +318,12 @@ function renderOver(s: RunState): void {
     <div class="over panel">
       <h1>💀 Game over</h1>
       <p>${CLASSES[s.cls].name} fell to the <b>${def.icon} ${def.name}</b> in round ${s.round} after <b>${wins}</b> win${wins === 1 ? "" : "s"}.</p>
+      ${
+        lastScore
+          ? `<h3>${lastScore.rank ? `🏆 #${lastScore.rank} on the ${CLASSES[s.cls].name} leaderboard!` : `${CLASSES[s.cls].name} leaderboard`}</h3>
+             ${boardTable(lastScore.board, lastScore.entry, false)}`
+          : ""
+      }
       ${heroPanel(s)}
       <div class="row">
         <button class="primary" data-action="again">Try again as ${CLASSES[s.cls].name}</button>
@@ -233,6 +337,9 @@ app.addEventListener("click", (e) => {
   if (!btn || btn.disabled) return;
   const seed = () => Math.floor(Math.random() * 2 ** 31);
   switch (btn.dataset.action) {
+    case "board":
+      boardTab = btn.dataset.id as ClassId | "all";
+      break;
     case "class":
       run = newRun(seed(), btn.dataset.id as ClassId);
       break;
@@ -258,9 +365,15 @@ app.addEventListener("click", (e) => {
       break;
     case "title":
       run = null;
+      boardTab = null;
       break;
   }
   render();
+});
+
+app.addEventListener("change", (e) => {
+  const input = e.target as HTMLInputElement;
+  if (input.id === "player-name") setPlayerName(input.value);
 });
 
 // Build stamp in the corner, outside #app so every screen keeps it.
