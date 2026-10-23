@@ -27,8 +27,8 @@ let battleSpeed = 1;
 const localBoard = new LocalLeaderboard(localStorage);
 const { VITE_SUPABASE_URL: sbUrl, VITE_SUPABASE_ANON_KEY: sbKey } = import.meta.env;
 const leaderboard: Leaderboard = sbUrl && sbKey ? new FallbackLeaderboard(new SupabaseLeaderboard(sbUrl, sbKey), localBoard) : localBoard;
-/** Title-screen leaderboard view: null = class picker, "all" or a class = board tab. */
-let boardTab: ClassId | "all" | null = null;
+/** Title-screen leaderboard view: null = class picker, else that class's board. */
+let boardTab: ClassId | null = null;
 /** The run that just ended, for highlighting it on the game-over board. */
 let lastScore: { entry: ScoreEntry; rank: number | null; board: ScoreEntry[] } | null = null;
 const NAME_KEY = "fjord-player-name";
@@ -95,7 +95,7 @@ function renderTitle(): void {
       ${import.meta.env.DEV ? `<p><a href="?sandbox">🧪 Sandbox</a> <span class="muted">(dev only)</span></p>` : ""}
       <div class="row name-row">
         <label>Name <input id="player-name" maxlength="16" placeholder="Hero" value="${esc(playerName())}"></label>
-        <button data-action="board" data-id="all">🏆 Leaderboard</button>
+        <button data-action="board" data-id="warrior">🏆 Leaderboard</button>
       </div>
       <div class="cards three">
         ${(Object.keys(CLASSES) as ClassId[])
@@ -115,15 +115,20 @@ function renderTitle(): void {
 }
 
 function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true): string {
-  if (!list.length) return `<p class="muted">No runs yet. Go set a score!</p>`;
+  // Always TOP_N rows; open slots read as unclaimed so the board never looks broken.
+  const cols = showClass ? 7 : 6;
+  const rank = (i: number) => `<td class="rank">${["🥇", "🥈", "🥉"][i] ?? i + 1}</td>`;
+  const empty = (i: number) =>
+    `<tr class="unclaimed">${rank(i)}<td>— Unclaimed —</td>${"<td>—</td>".repeat(cols - 2)}</tr>`;
   const rows = list
+    .slice(0, TOP_N)
     .map((e, i) => {
       const skills = e.skills
         .map(([id, lv]) => (SKILLS[id] ? `<span title="${SKILLS[id].name} ${lv}">${SKILLS[id].icon}<sub>${lv}</sub></span>` : ""))
         .join("");
       const me = highlight && e.at === highlight.at && e.name === highlight.name ? "me" : "";
       return `<tr class="${me}">
-        <td class="rank">${["🥇", "🥈", "🥉"][i] ?? i + 1}</td>
+        ${rank(i)}
         <td>${esc(e.name)}</td>
         ${showClass ? `<td>${CLASSES[e.cls]?.icon ?? ""} ${CLASSES[e.cls]?.name ?? e.cls}</td>` : ""}
         <td class="num"><b>${e.wins}</b></td>
@@ -132,6 +137,7 @@ function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true
         <td class="muted">${new Date(e.at).toLocaleDateString()}</td>
       </tr>`;
     })
+    .concat(Array.from({ length: Math.max(0, TOP_N - list.length) }, (_, k) => empty(list.length + k)))
     .join("");
   return `<div class="board-wrap"><table class="board">
     <thead><tr><th>#</th><th>Name</th>${showClass ? "<th>Class</th>" : ""}<th>Wins</th><th>Build</th><th>Fell to</th><th>Date</th></tr></thead>
@@ -139,22 +145,19 @@ function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true
   </table></div>`;
 }
 
-async function renderBoard(tab: ClassId | "all"): Promise<void> {
+async function renderBoard(tab: ClassId): Promise<void> {
   app.innerHTML = `<div class="title-screen"><h1>🏆 Leaderboard</h1><p class="sub">Loading…</p></div>`;
-  const list = await leaderboard.top(tab === "all" ? undefined : tab);
+  const list = await leaderboard.top(tab);
   if (boardTab !== tab || run) return;
-  const tabs = (["all", ...Object.keys(CLASSES)] as (ClassId | "all")[])
-    .map(
-      (id) =>
-        `<button class="tab ${id === tab ? "on" : ""}" data-action="board" data-id="${id}">${id === "all" ? "All" : `${CLASSES[id].icon} ${CLASSES[id].name}`}</button>`,
-    )
+  const tabs = (Object.keys(CLASSES) as ClassId[])
+    .map((id) => `<button class="tab ${id === tab ? "on" : ""}" data-action="board" data-id="${id}">${CLASSES[id].icon} ${CLASSES[id].name}</button>`)
     .join("");
   app.innerHTML = `
     <div class="title-screen">
       <h1>🏆 Leaderboard</h1>
-      <p class="sub">Top ${TOP_N} runs ${leaderboard.scope === "global" ? "worldwide" : "on this device"}, by wins.</p>
+      <p class="sub">Top ${TOP_N} ${CLASSES[tab].name} runs ${leaderboard.scope === "global" ? "worldwide" : "on this device"}, by wins.</p>
       <div class="row tabs">${tabs}</div>
-      <section class="panel">${boardTable(list)}</section>
+      <section class="panel">${boardTable(list, undefined, false)}</section>
       <div class="row"><button data-action="title">⬅ Back</button></div>
     </div>`;
 }
@@ -347,7 +350,7 @@ app.addEventListener("click", (e) => {
   const seed = () => Math.floor(Math.random() * 2 ** 31);
   switch (btn.dataset.action) {
     case "board":
-      boardTab = btn.dataset.id as ClassId | "all";
+      boardTab = btn.dataset.id as ClassId;
       break;
     case "class":
       run = newRun(seed(), btn.dataset.id as ClassId);

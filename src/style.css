@@ -151,3 +151,5 @@ h2.loss { color: var(--bad); }
 .over .board-wrap { margin: 8px 0 14px; }
 .spinner { display: inline-block; width: 0.9em; height: 0.9em; margin-right: 6px; vertical-align: -0.1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.board tr.unclaimed td { color: var(--muted); opacity: 0.6; font-style: italic; }
+.board tr.unclaimed td.rank { font-style: normal; }
