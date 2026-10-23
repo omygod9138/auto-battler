@@ -1,5 +1,6 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
+import { backdrop, PIXEL } from "./backdrop";
 import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
@@ -113,7 +114,6 @@ class Scene {
     hero: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null, skill: null },
     mob: { lunge: -9, hurt: -9, walk: 0, moving: 0, deathAt: null, skill: null },
   };
-  clouds = Array.from({ length: 6 }, (_, i) => ({ x: i * 170 + rand(0, 80), y: rand(20, 90), s: rand(0.6, 1.3), v: rand(4, 10) }));
   ambient: Particle[] = Array.from({ length: 40 }, () => this.flake(rand(0, H)));
 
   flake(y = -10): Particle {
@@ -384,10 +384,6 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
   scene.bursts = scene.bursts.filter((b) => scene.now - b.born < b.dur);
   scene.floaters = scene.floaters.filter((f) => scene.now - f.born < 1.1);
   scene.shots = scene.shots.filter((s) => scene.now - s.born < (s.fx === "meteor" ? 0.32 : 0.18));
-  for (const c of scene.clouds) {
-    c.x -= c.v * dt;
-    if (c.x < -140) c.x = W + 40;
-  }
   for (const f of scene.ambient) {
     f.x += f.vx * dt + Math.sin(scene.now + f.y * 0.05) * 0.2;
     f.y += f.vy * dt;
@@ -648,84 +644,17 @@ function windup(battle: Battle, side: Side): number | undefined {
 }
 
 function drawBackground(ctx: CanvasRenderingContext2D, scene: Scene, t: number, boss: boolean): void {
-  const sky = ctx.createLinearGradient(0, 0, 0, GROUND);
-  sky.addColorStop(0, boss ? "#2a1620" : "#1b2740");
-  sky.addColorStop(1, boss ? "#6b3a3a" : "#56708f");
-  ctx.fillStyle = sky;
-  ctx.fillRect(-20, -20, W + 40, H + 40);
-
-  // Aurora ribbon.
-  ctx.globalAlpha = 0.18;
-  ctx.strokeStyle = boss ? "#ff7a6b" : "#7dffc0";
-  ctx.lineWidth = 18;
-  ctx.beginPath();
-  for (let x = 0; x <= W; x += 20) ctx.lineTo(x, 50 + Math.sin(x * 0.012 + t * 0.6) * 18);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  ctx.fillStyle = "rgba(255,255,255,0.12)";
-  for (const c of scene.clouds) {
-    ctx.beginPath();
-    ctx.ellipse(c.x, c.y, 60 * c.s, 14 * c.s, 0, 0, Math.PI * 2);
-    ctx.ellipse(c.x + 30 * c.s, c.y - 8 * c.s, 34 * c.s, 12 * c.s, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Two mountain layers drifting at different speeds.
-  for (const [color, h, sp, seed] of [["#2c3b52", 90, 3, 37], ["#36485f", 55, 7, 53]] as const) {
-    ctx.fillStyle = boss ? (h > 60 ? "#3a2430" : "#4a2e36") : color;
-    const off = (t * sp) % 120;
-    ctx.beginPath();
-    ctx.moveTo(-20, GROUND);
-    for (let x = -120; x <= W + 120; x += 60) {
-      const k = Math.floor((x + off) / 60);
-      ctx.lineTo(x - off + 120, GROUND - h * 0.5 - ((k * seed) % 40) - ((k * 7) % 2) * 15);
-    }
-    ctx.lineTo(W + 20, GROUND);
-    ctx.fill();
-  }
-
-  ctx.fillStyle = "#3d5233";
-  ctx.fillRect(-20, GROUND, W + 40, H - GROUND + 20);
-  ctx.fillStyle = "#4c6640";
-  ctx.fillRect(-20, GROUND, W + 40, 6);
-  // Swaying grass tufts.
-  ctx.strokeStyle = "#5f7d4c";
-  ctx.lineWidth = 2;
-  for (let x = 6; x < W; x += 22) {
-    const sway = Math.sin(t * 2 + x * 0.3) * 3;
-    ctx.beginPath();
-    ctx.moveTo(x, GROUND + 4);
-    ctx.lineTo(x + sway, GROUND - 6);
-    ctx.moveTo(x + 4, GROUND + 4);
-    ctx.lineTo(x + 6 + sway, GROUND - 3);
-    ctx.stroke();
-  }
-
+  backdrop(W, H, GROUND, WALL_X, boss).draw(ctx, t);
   drawWall(ctx, scene, t);
 
+  // Snow falls in whole art pixels so it matches the backdrop.
   ctx.fillStyle = "rgba(255,255,255,0.7)";
-  for (const f of scene.ambient) ctx.fillRect(f.x, f.y, f.size, f.size);
+  for (const f of scene.ambient) ctx.fillRect(Math.round(f.x / PIXEL) * PIXEL, Math.round(f.y / PIXEL) * PIXEL, f.size > 1.8 ? PIXEL : 2, f.size > 1.8 ? PIXEL : 2);
 }
 
-/** The rock wall at the far end, which Spartan Kick can slam the mob into. */
+/** Cracks in the far wall (drawn by the backdrop) after Spartan Kick slams the mob into it. */
 function drawWall(ctx: CanvasRenderingContext2D, scene: Scene, t: number): void {
   const x0 = WALL_X;
-  const top = GROUND - 150;
-  ctx.fillStyle = "#4d4a52";
-  ctx.beginPath();
-  ctx.moveTo(W + 20, top - 10);
-  for (let y = top; y <= GROUND; y += 18) ctx.lineTo(x0 + ((y * 37) % 9) - 4, y);
-  ctx.lineTo(W + 20, GROUND + 4);
-  ctx.fill();
-  ctx.strokeStyle = "#35333a";
-  ctx.lineWidth = 2;
-  for (let y = top + 20; y < GROUND; y += 26) {
-    ctx.beginPath();
-    ctx.moveTo(x0 + 2, y);
-    ctx.lineTo(W, y + 4);
-    ctx.stroke();
-  }
   const k = (t - scene.wallHit) / 1.5;
   if (k >= 0 && k < 1) {
     ctx.globalAlpha = 1 - k;
