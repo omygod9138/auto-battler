@@ -88,6 +88,24 @@ export function hasDeathAnim(id: string): boolean {
   return !!sprite(id)?.anims.death;
 }
 
+/** How a character without death frames falls: it turns `turn` radians backwards about the point `centre`
+ * up its height, which comes to rest `rest` up its height. Fractions of the character's height. */
+export interface Fall {
+  turn: number;
+  centre: number;
+  rest: number;
+}
+
+/** People and the wraith topple flat onto their back, lifted by half the body's thickness so they lie on
+ * the ground, not in it; beasts roll belly-up about their middle. */
+export function deathFall(id: string): Fall {
+  const kind = sprite(id) ? "humanoid" : (SPECS[id] ?? SPECS.slime).kind;
+  if (kind === "humanoid" || kind === "wraith") return { turn: Math.PI / 2, centre: 0, rest: 0.12 };
+  // The drake's body sits low under its wings.
+  if (kind === "drake") return { turn: Math.PI, centre: 0.375, rest: 0.15 };
+  return { turn: Math.PI, centre: 0.5, rest: 0.5 };
+}
+
 /** Approximate on-screen height, for placing health bars and numbers. */
 export function characterHeight(id: string): number {
   const art = sprite(id);
@@ -164,10 +182,15 @@ function drawSprite(ctx: CanvasRenderingContext2D, art: SpriteSet, pose: Pose): 
   }
   pick ??= loop(anims.idle, (pose.t * 8) / (anims.idle?.frames.length ?? 1)) ?? at(art.still, 0)!;
   const [clip, img] = pick;
+  let foot = clip.foot;
+  if (clip.rest !== undefined && clip.frames.length > 1) {
+    // Sink from the feet to where the body lies, so the fall ends on the ground.
+    foot += Math.round(((clip.rest - clip.foot) * clip.frames.indexOf(img)) / (clip.frames.length - 1));
+  }
   ctx.save();
   ctx.scale(SPRITE_SCALE * art.scale, SPRITE_SCALE * art.scale);
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, -Math.round(img.width / 2), -clip.foot - hop);
+  ctx.drawImage(img, -Math.round(img.width / 2), -foot - hop);
   ctx.restore();
 }
 
