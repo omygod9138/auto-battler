@@ -117,7 +117,7 @@ canvas.arena { width: 100%; max-width: 880px; aspect-ratio: 880 / 320; border-ra
 h2.win { color: var(--good); }
 h2.loss { color: var(--bad); }
 
-.over { max-width: 560px; margin: 20px auto; text-align: center; }
+.over { max-width: 640px; margin: 20px auto; text-align: center; }
 .over .panel.hero { text-align: left; margin: 14px 0; }
 .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
@@ -134,3 +134,18 @@ h2.loss { color: var(--bad); }
 @media (max-width: 640px) { .sb-bottom { grid-template-columns: 1fr; } }
 
 .build-stamp { position: fixed; right: 8px; bottom: 6px; font-size: 11px; opacity: 0.55; pointer-events: none; font-family: ui-monospace, monospace; }
+
+/* Leaderboard */
+.name-row { align-items: center; margin: 10px 0 18px; }
+.name-row input { background: var(--panel); color: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; width: 11em; margin-left: 6px; font: inherit; }
+.tabs { margin-bottom: 12px; }
+.tab.on { border-color: var(--accent); color: var(--accent); }
+.board-wrap { overflow-x: auto; }
+.board { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
+.board th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+.board th, .board td { padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.board .rank, .board .num { text-align: center; }
+.board .skills span { margin-right: 2px; }
+.board .skills sub { font-size: 0.65em; color: var(--muted); }
+.board tr.me td { background: rgba(224, 176, 79, 0.15); }
+.over .board-wrap { margin: 8px 0 14px; }
