@@ -11,6 +11,9 @@ export interface Clip {
   frames: HTMLImageElement[];
   /** Row just below the first frame's lowest opaque pixel, where the feet touch the ground. */
   foot: number;
+  /** Death clips: the row the body rests on in the last frame. PixelLab deaths end mid-fall with only a
+   * dangling bow or sword at the feet' row, so the clip sinks toward this row as it plays. */
+  rest?: number;
 }
 
 export interface SpriteSet {
@@ -21,6 +24,8 @@ export interface SpriteSet {
   skills: Partial<Record<SkillId, Clip>>;
   /** Height of the still's opaque art above the feet. */
   visible: number;
+  /** Extra enlargement so art drawn smaller than the others still stands as tall. */
+  scale: number;
 }
 
 interface PixelLabExport {
@@ -58,6 +63,9 @@ export function skillFor(name: string): SkillId | undefined {
 
 const sets = new Map<string, SpriteSet>();
 
+/** Art whose figure is shorter than this many pixels is scaled up to it (the mage's height; the warrior is 59). */
+const MIN_VISIBLE = 57;
+
 export function sprite(id: string): SpriteSet | undefined {
   return sets.get(id);
 }
@@ -81,25 +89,46 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-function opaqueRows(img: HTMLImageElement): { top: number; bottom: number } {
+function pixels(img: HTMLImageElement): Uint8ClampedArray {
   const c = document.createElement("canvas");
   c.width = img.width;
   c.height = img.height;
   const g = c.getContext("2d")!;
   g.drawImage(img, 0, 0);
-  const { data } = g.getImageData(0, 0, c.width, c.height);
-  let top = c.height;
+  return g.getImageData(0, 0, c.width, c.height).data;
+}
+
+function opaqueRows(img: HTMLImageElement): { top: number; bottom: number } {
+  const data = pixels(img);
+  let top = img.height;
   let bottom = -1;
-  for (let y = 0; y < c.height; y++) {
-    for (let x = 0; x < c.width; x++) {
-      if (data[(y * c.width + x) * 4 + 3] > 0) {
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      if (data[(y * img.width + x) * 4 + 3] > 0) {
         top = Math.min(top, y);
         bottom = y;
         break;
       }
     }
   }
-  return bottom < 0 ? { top: 0, bottom: c.height - 1 } : { top, bottom };
+  return bottom < 0 ? { top: 0, bottom: img.height - 1 } : { top, bottom };
+}
+
+/** Row just below the median of each column's lowest opaque pixel: where a lying body meets the ground,
+ * ignoring a few low-hanging pixels like a weapon tip. */
+function restRow(img: HTMLImageElement): number {
+  const data = pixels(img);
+  const bottoms: number[] = [];
+  for (let x = 0; x < img.width; x++) {
+    for (let y = img.height - 1; y >= 0; y--) {
+      if (data[(y * img.width + x) * 4 + 3] > 0) {
+        bottoms.push(y);
+        break;
+      }
+    }
+  }
+  bottoms.sort((a, b) => a - b);
+  return (bottoms[Math.floor(bottoms.length / 2)] ?? img.height - 1) + 1;
 }
 
 async function loadClip(urls: string[]): Promise<Clip> {
@@ -127,6 +156,7 @@ async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | n
       if (role && !anims[role]) anims[role] = await loadClip(urls);
     }
   }
+  if (anims.death) anims.death.rest = restRow(anims.death.frames[anims.death.frames.length - 1]);
   // No attack clip: the first skill clip (e.g. the mage's Fireball cast) stands in, so plain attacks
   // and skills without art of their own still animate.
   anims.attack ??= Object.values(skills)[0];
@@ -134,7 +164,8 @@ async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | n
   const still = stillUrl ? await loadClip([stillUrl]) : anims.idle;
   if (!still) return null;
   const { top, bottom } = opaqueRows(still.frames[0]);
-  return { still, anims, skills, visible: bottom + 1 - top };
+  const visible = bottom + 1 - top;
+  return { still, anims, skills, visible, scale: Math.max(1, MIN_VISIBLE / visible) };
 }
 
 let loading: Promise<void> | null = null;

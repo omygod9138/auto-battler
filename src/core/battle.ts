@@ -103,8 +103,8 @@ export class Battle {
   private mobSlow = { pct: 0, left: 0 };
   /** Seconds the hero dodges everything after Disengage. */
   evade = 0;
-  /** When the mob last walked, so Poison knows it is on the move. */
-  private mobWalkedAt = 0;
+  /** When each side last walked: Poison checks the mob is on the move, and the view picks walk or idle frames. */
+  private walkedAt: Record<Side, number> = { hero: -Infinity, mob: 0 };
   /** When each ready Ranger shot started waiting for its band. */
   private bandHold = new Map<SkillId, number>();
   private shieldRefill = 0;
@@ -258,8 +258,8 @@ export class Battle {
       const step = Math.min(me.s.speed * (1 - slow) * TICK, dist - me.s.range);
       const from = me.x;
       me.x += dir * step;
+      if (step > 0) this.walkedAt[me.side] = this.time;
       if (me.side === "mob" && step > 0) {
-        this.mobWalkedAt = this.time;
         // The trap springs as the mob walks onto it, not when a knockback or a leap moves things around it.
         if (this.snareX !== null && from > this.snareX && me.x <= this.snareX) {
           const n = N.snare(this.lv("snare"));
@@ -394,8 +394,13 @@ export class Battle {
     if (this.snareRearm <= 0) this.snareX = this.hero.x + BAND_EDGE.mid;
   }
 
+  /** True while that side is stepping toward its foe (a Ranger holding its ground is not). */
+  walking(side: Side): boolean {
+    return this.time - this.walkedAt[side] < 2 * TICK - 1e-9;
+  }
+
   private mobWalking(): boolean {
-    return this.time - this.mobWalkedAt < 2 * TICK - 1e-9 || this.mob.push !== 0;
+    return this.walking("mob") || this.mob.push !== 0;
   }
 
   /** Close the gap at dash speed, then hit with Charge on arrival. */
@@ -403,6 +408,7 @@ export class Battle {
     const h = this.hero;
     const gap = this.mob.x - h.x - h.s.range;
     h.x += Math.max(0, Math.min(DASH_SPEED * TICK, gap));
+    this.walkedAt.hero = this.time;
     if (gap > DASH_SPEED * TICK) return;
     this.dashing = false;
     this.charged = true;

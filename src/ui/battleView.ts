@@ -1,6 +1,6 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
-import { characterHeight, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Pose } from "./characters";
+import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
 const H = 320;
@@ -396,7 +396,7 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
   for (const side of ["hero", "mob"] as const) {
     const a = scene.anim[side];
     // Ask the sim rather than watching x: it steps at 20 Hz, so most frames see no change.
-    const moving = isAdvancing(battle, side);
+    const moving = !battle.outcome && battle.walking(side);
     a.moving += ((moving ? 1 : 0) - a.moving) * Math.min(1, dt * 10);
     if (moving || a.moving > 0.05) a.walk += dt * 9;
     const f = side === "hero" ? battle.hero : battle.mob;
@@ -469,6 +469,7 @@ function draw(
       flash: hurt >= 0 && hurt < 0.5 ? 1 - hurt * 2 : 0,
       death,
       animatedDeath: hasDeathAnim(id),
+      fall: deathFall(id),
       zoom: pixelScale(id),
       squash: hurt >= 0 ? 1 - Math.sin(hurt * Math.PI) * 0.08 : 1,
       frozen,
@@ -637,13 +638,6 @@ function drawBanner(ctx: CanvasRenderingContext2D, scene: Scene): void {
   ctx.globalAlpha = 1;
 }
 
-/** True while a fighter is walking toward its foe, mirroring the movement rules in Battle. */
-function isAdvancing(battle: Battle, side: Side): boolean {
-  const me = side === "hero" ? battle.hero : battle.mob;
-  const foe = side === "hero" ? battle.mob : battle.hero;
-  return !battle.outcome && me.stun <= 0 && me.root <= 0 && Math.abs(foe.x - me.x) > me.s.range + 1e-6;
-}
-
 /** How far into the swing before the next hit, so attack art can wind up ahead of the damage. */
 function windup(battle: Battle, side: Side): number | undefined {
   const me = side === "hero" ? battle.hero : battle.mob;
@@ -757,6 +751,7 @@ interface FighterPose {
   death: number | null;
   /** The character plays its own death frames, so only fade it. */
   animatedDeath: boolean;
+  fall: Fall;
   /** Extra enlargement of the layer; sprite art is drawn 1:1 there and scaled once here. */
   zoom: number;
   squash: number;
@@ -774,8 +769,14 @@ function drawFighter(ctx: CanvasRenderingContext2D, layer: Layer, p: FighterPose
   ctx.save();
   ctx.translate(p.x, GROUND);
   if (p.death !== null) {
-    // Topple backwards and fade.
-    if (!p.animatedDeath) ctx.rotate(-p.facing * easeOut(p.death) * 1.35);
+    // Fall backwards onto the ground, unless the clip plays the fall itself.
+    if (!p.animatedDeath) {
+      const e = easeOut(p.death);
+      const { turn, centre, rest } = p.fall;
+      ctx.translate(0, -p.h * (centre + (rest - centre) * e));
+      ctx.rotate(-p.facing * e * turn);
+      ctx.translate(0, p.h * centre);
+    }
     ctx.globalAlpha = 1 - p.death * 0.65;
   }
   ctx.scale(p.facing * (2 - p.squash) * CHAR_SCALE, p.squash * CHAR_SCALE);

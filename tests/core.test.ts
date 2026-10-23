@@ -439,8 +439,13 @@ describe("ranger range bands", () => {
 
   it("holds its ground while the mob walks in", () => {
     const b = ranger({});
-    for (let i = 0; i < 100; i++) b.step();
+    for (let i = 0; i < 100; i++) {
+      b.step();
+      // Standing still, so the view plays idle frames, not a walk on the spot.
+      expect(b.walking("hero")).toBe(false);
+    }
     expect(b.hero.x).toBe(start);
+    expect(b.walking("mob")).toBe(true);
   });
 
   it("Longshot waits for the Far band, Scatter Shot for Close", () => {
