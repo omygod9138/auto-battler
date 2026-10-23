@@ -117,7 +117,7 @@ canvas.arena { width: 100%; max-width: 880px; aspect-ratio: 880 / 320; border-ra
 h2.win { color: var(--good); }
 h2.loss { color: var(--bad); }
 
-.over { max-width: 640px; margin: 20px auto; text-align: center; }
+.over { max-width: 900px; margin: 20px auto; text-align: center; }
 .over .panel.hero { text-align: left; margin: 14px 0; }
 .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
@@ -140,12 +140,14 @@ h2.loss { color: var(--bad); }
 .name-row input { background: var(--panel); color: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; width: 11em; margin-left: 6px; font: inherit; }
 .tabs { margin-bottom: 12px; }
 .tab.on { border-color: var(--accent); color: var(--accent); }
-.board-wrap { overflow-x: auto; }
+.board-screen { max-width: 1100px; }
+.board-wrap { overflow-x: hidden; }
 .board { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
 .board th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
 .board th, .board td { padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .board .rank, .board .num { text-align: center; }
-.board .skills span { margin-right: 2px; }
+.board td.skills { white-space: normal; }
+.board .skills span { margin-right: 2px; display: inline-block; }
 .board .skills sub { font-size: 0.65em; color: var(--muted); }
 .board tr.me td { background: rgba(224, 176, 79, 0.15); }
 .over .board-wrap { margin: 8px 0 14px; }
@@ -153,3 +155,9 @@ h2.loss { color: var(--bad); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .board tr.unclaimed td { color: var(--muted); opacity: 0.6; font-style: italic; }
 .board tr.unclaimed td.rank { font-style: normal; }
+/* Narrow screens: drop the least useful columns instead of scrolling sideways. */
+@media (max-width: 640px) {
+  .board .opt, .board .cls-name { display: none; }
+  .board td.name { white-space: normal; word-break: break-word; }
+  .board th, .board td { padding: 6px 4px; }
+}
