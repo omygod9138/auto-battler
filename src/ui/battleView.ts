@@ -396,7 +396,7 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
   for (const side of ["hero", "mob"] as const) {
     const a = scene.anim[side];
     // Ask the sim rather than watching x: it steps at 20 Hz, so most frames see no change.
-    const moving = isAdvancing(battle, side);
+    const moving = !battle.outcome && battle.walking(side);
     a.moving += ((moving ? 1 : 0) - a.moving) * Math.min(1, dt * 10);
     if (moving || a.moving > 0.05) a.walk += dt * 9;
     const f = side === "hero" ? battle.hero : battle.mob;
@@ -636,13 +636,6 @@ function drawBanner(ctx: CanvasRenderingContext2D, scene: Scene): void {
   ctx.fillStyle = "#ffd34d";
   ctx.fillText(b.text, W / 2, 70);
   ctx.globalAlpha = 1;
-}
-
-/** True while a fighter is walking toward its foe, mirroring the movement rules in Battle. */
-function isAdvancing(battle: Battle, side: Side): boolean {
-  const me = side === "hero" ? battle.hero : battle.mob;
-  const foe = side === "hero" ? battle.mob : battle.hero;
-  return !battle.outcome && me.stun <= 0 && me.root <= 0 && Math.abs(foe.x - me.x) > me.s.range + 1e-6;
 }
 
 /** How far into the swing before the next hit, so attack art can wind up ahead of the damage. */
