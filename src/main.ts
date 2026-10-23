@@ -119,7 +119,7 @@ function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true
   const cols = showClass ? 7 : 6;
   const rank = (i: number) => `<td class="rank">${["🥇", "🥈", "🥉"][i] ?? i + 1}</td>`;
   const empty = (i: number) =>
-    `<tr class="unclaimed">${rank(i)}<td>— Unclaimed —</td>${"<td>—</td>".repeat(cols - 2)}</tr>`;
+    `<tr class="unclaimed">${rank(i)}<td>— Unclaimed —</td>${"<td>—</td>".repeat(cols - 4)}<td class="opt">—</td><td class="opt">—</td></tr>`;
   const rows = list
     .slice(0, TOP_N)
     .map((e, i) => {
@@ -133,14 +133,14 @@ function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true
         ${showClass ? `<td>${CLASSES[e.cls]?.icon ?? ""} ${CLASSES[e.cls]?.name ?? e.cls}</td>` : ""}
         <td class="num"><b>${e.wins}</b></td>
         <td class="skills">${skills}</td>
-        <td class="muted">${esc(e.killedBy)}</td>
-        <td class="muted">${new Date(e.at).toLocaleDateString()}</td>
+        <td class="muted opt">${esc(e.killedBy)}</td>
+        <td class="muted opt">${new Date(e.at).toLocaleDateString()}</td>
       </tr>`;
     })
     .concat(Array.from({ length: Math.max(0, TOP_N - list.length) }, (_, k) => empty(list.length + k)))
     .join("");
   return `<div class="board-wrap"><table class="board">
-    <thead><tr><th>#</th><th>Name</th>${showClass ? "<th>Class</th>" : ""}<th>Wins</th><th>Build</th><th>Fell to</th><th>Date</th></tr></thead>
+    <thead><tr><th>#</th><th>Name</th>${showClass ? "<th>Class</th>" : ""}<th>Wins</th><th>Build</th><th class="opt">Fell to</th><th class="opt">Date</th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
@@ -153,7 +153,7 @@ async function renderBoard(tab: ClassId): Promise<void> {
     .map((id) => `<button class="tab ${id === tab ? "on" : ""}" data-action="board" data-id="${id}">${CLASSES[id].icon} ${CLASSES[id].name}</button>`)
     .join("");
   app.innerHTML = `
-    <div class="title-screen">
+    <div class="title-screen board-screen">
       <h1>🏆 Leaderboard</h1>
       <p class="sub">Top ${TOP_N} ${CLASSES[tab].name} runs ${leaderboard.scope === "global" ? "worldwide" : "on this device"}, by wins.</p>
       <div class="row tabs">${tabs}</div>
