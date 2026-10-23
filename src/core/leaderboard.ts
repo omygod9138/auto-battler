@@ -116,6 +116,18 @@ const fromRow = (r: ScoreRow): ScoreEntry & { id: number } => ({
   at: Date.parse(r.created_at),
 });
 
+/**
+ * Project origin from whatever was pasted as the Supabase URL: copies from the
+ * dashboard may carry a path like /rest/v1/ or lack the scheme.
+ */
+export function apiBase(url: string): string {
+  try {
+    return new URL(/^https?:\/\//.test(url.trim()) ? url.trim() : `https://${url.trim()}`).origin;
+  } catch {
+    return url.replace(/\/+$/, "");
+  }
+}
+
 /** Shared board in a Supabase `scores` table (supabase/migrations), via its REST API. */
 export class SupabaseLeaderboard implements Leaderboard {
   readonly scope = "global";
@@ -127,7 +139,7 @@ export class SupabaseLeaderboard implements Leaderboard {
   ) {}
 
   private async call<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await this.fetcher(`${this.url.replace(/\/$/, "")}/rest/v1/${path}`, {
+    const res = await this.fetcher(`${apiBase(this.url)}/rest/v1/${path}`, {
       ...init,
       headers: { apikey: this.key, Authorization: `Bearer ${this.key}`, "Content-Type": "application/json", ...init.headers },
     });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FallbackLeaderboard, LocalLeaderboard, SupabaseLeaderboard, TOP_N, cleanName, type ScoreEntry } from "../src/core/leaderboard";
+import { FallbackLeaderboard, apiBase, LocalLeaderboard, SupabaseLeaderboard, TOP_N, cleanName, type ScoreEntry } from "../src/core/leaderboard";
 
 function memStore() {
   const m = new Map<string, string>();
@@ -67,6 +67,12 @@ describe("supabase leaderboard", () => {
     expect(saved.at).toBe(1001);
     expect((await lb.top()).map((e) => e.wins)).toEqual([9, 7]);
     expect(calls).toContain("GET /rest/v1/scores?select=*&order=wins.desc%2Ccreated_at.asc&limit=10&cls=eq.warrior");
+  });
+
+  it("accepts the project URL with a path or without a scheme", () => {
+    expect(apiBase("https://abc.supabase.co/rest/v1/")).toBe("https://abc.supabase.co");
+    expect(apiBase(" abc.supabase.co ")).toBe("https://abc.supabase.co");
+    expect(apiBase("https://abc.supabase.co")).toBe("https://abc.supabase.co");
   });
 
   it("falls back to this device when the server fails", async () => {
