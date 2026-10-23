@@ -79,7 +79,8 @@ export const SPRITE_SCALE = 2 / 1.35;
 
 /** How much a character is enlarged when drawn; the battle draws sprites at 1:1 and applies this itself to keep pixels crisp. */
 export function pixelScale(id: string): number {
-  return sprite(id) ? SPRITE_SCALE : 1;
+  const art = sprite(id);
+  return art ? SPRITE_SCALE * art.scale : 1;
 }
 
 /** True when the character has its own death animation instead of toppling over. */
@@ -90,7 +91,7 @@ export function hasDeathAnim(id: string): boolean {
 /** Approximate on-screen height, for placing health bars and numbers. */
 export function characterHeight(id: string): number {
   const art = sprite(id);
-  if (art) return art.visible * SPRITE_SCALE;
+  if (art) return art.visible * SPRITE_SCALE * art.scale;
   const s = SPECS[id] ?? SPECS.slime;
   const base = s.kind === "humanoid" ? 68 : s.kind === "slime" ? 34 : s.kind === "wolf" ? 42 : s.kind === "wraith" ? 74 : 96;
   return base * s.scale;
@@ -164,7 +165,7 @@ function drawSprite(ctx: CanvasRenderingContext2D, art: SpriteSet, pose: Pose): 
   pick ??= loop(anims.idle, (pose.t * 8) / (anims.idle?.frames.length ?? 1)) ?? at(art.still, 0)!;
   const [clip, img] = pick;
   ctx.save();
-  ctx.scale(SPRITE_SCALE, SPRITE_SCALE);
+  ctx.scale(SPRITE_SCALE * art.scale, SPRITE_SCALE * art.scale);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(img, -Math.round(img.width / 2), -clip.foot - hop);
   ctx.restore();

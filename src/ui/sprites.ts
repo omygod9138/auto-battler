@@ -21,6 +21,8 @@ export interface SpriteSet {
   skills: Partial<Record<SkillId, Clip>>;
   /** Height of the still's opaque art above the feet. */
   visible: number;
+  /** Extra enlargement so art drawn smaller than the others still stands as tall. */
+  scale: number;
 }
 
 interface PixelLabExport {
@@ -57,6 +59,9 @@ export function skillFor(name: string): SkillId | undefined {
 }
 
 const sets = new Map<string, SpriteSet>();
+
+/** Art whose figure is shorter than this many pixels is scaled up to it (the mage's height; the warrior is 59). */
+const MIN_VISIBLE = 57;
 
 export function sprite(id: string): SpriteSet | undefined {
   return sets.get(id);
@@ -134,7 +139,8 @@ async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | n
   const still = stillUrl ? await loadClip([stillUrl]) : anims.idle;
   if (!still) return null;
   const { top, bottom } = opaqueRows(still.frames[0]);
-  return { still, anims, skills, visible: bottom + 1 - top };
+  const visible = bottom + 1 - top;
+  return { still, anims, skills, visible, scale: Math.max(1, MIN_VISIBLE / visible) };
 }
 
 let loading: Promise<void> | null = null;
