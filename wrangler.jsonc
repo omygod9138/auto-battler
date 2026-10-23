@@ -1,0 +1,11 @@
+// Cloudflare Workers deploy (static assets only, no Worker script).
+// Workers Builds runs `npm run build` then `npx wrangler deploy`; this file
+// stops wrangler from trying to auto-configure the Vite project.
+{
+  "name": "auto-battler",
+  "compatibility_date": "2026-10-23",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}
