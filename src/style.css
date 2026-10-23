@@ -157,6 +157,7 @@ h2.loss { color: var(--bad); }
 .board tr.unclaimed td.rank { font-style: normal; }
 /* Narrow screens: drop the least useful columns instead of scrolling sideways. */
 @media (max-width: 640px) {
-  .board .opt { display: none; }
+  .board .opt, .board .cls-name { display: none; }
+  .board td.name { white-space: normal; word-break: break-word; }
   .board th, .board td { padding: 6px 4px; }
 }

@@ -27,8 +27,8 @@ let battleSpeed = 1;
 const localBoard = new LocalLeaderboard(localStorage);
 const { VITE_SUPABASE_URL: sbUrl, VITE_SUPABASE_ANON_KEY: sbKey } = import.meta.env;
 const leaderboard: Leaderboard = sbUrl && sbKey ? new FallbackLeaderboard(new SupabaseLeaderboard(sbUrl, sbKey), localBoard) : localBoard;
-/** Title-screen leaderboard view: null = class picker, else that class's board. */
-let boardTab: ClassId | null = null;
+/** Title-screen leaderboard view: null = class picker, "all" = all-time across classes, else that class's board. */
+let boardTab: ClassId | "all" | null = null;
 /** The run that just ended, for highlighting it on the game-over board. */
 let lastScore: { entry: ScoreEntry; rank: number | null; board: ScoreEntry[] } | null = null;
 const NAME_KEY = "fjord-player-name";
@@ -95,7 +95,7 @@ function renderTitle(): void {
       ${import.meta.env.DEV ? `<p><a href="?sandbox">🧪 Sandbox</a> <span class="muted">(dev only)</span></p>` : ""}
       <div class="row name-row">
         <label>Name <input id="player-name" maxlength="16" placeholder="Hero" value="${esc(playerName())}"></label>
-        <button data-action="board" data-id="warrior">🏆 Leaderboard</button>
+        <button data-action="board" data-id="all">🏆 Leaderboard</button>
       </div>
       <div class="cards three">
         ${(Object.keys(CLASSES) as ClassId[])
@@ -129,8 +129,8 @@ function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true
       const me = highlight && e.at === highlight.at && e.name === highlight.name ? "me" : "";
       return `<tr class="${me}">
         ${rank(i)}
-        <td>${esc(e.name)}</td>
-        ${showClass ? `<td>${CLASSES[e.cls]?.icon ?? ""} ${CLASSES[e.cls]?.name ?? e.cls}</td>` : ""}
+        <td class="name">${esc(e.name)}</td>
+        ${showClass ? `<td title="${CLASSES[e.cls]?.name ?? e.cls}">${CLASSES[e.cls]?.icon ?? ""}<span class="cls-name"> ${CLASSES[e.cls]?.name ?? e.cls}</span></td>` : ""}
         <td class="num"><b>${e.wins}</b></td>
         <td class="skills">${skills}</td>
         <td class="muted opt">${esc(e.killedBy)}</td>
@@ -145,19 +145,22 @@ function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true
   </table></div>`;
 }
 
-async function renderBoard(tab: ClassId): Promise<void> {
+async function renderBoard(tab: ClassId | "all"): Promise<void> {
   app.innerHTML = `<div class="title-screen"><h1>🏆 Leaderboard</h1><p class="sub">Loading…</p></div>`;
-  const list = await leaderboard.top(tab);
+  const list = await leaderboard.top(tab === "all" ? undefined : tab);
   if (boardTab !== tab || run) return;
-  const tabs = (Object.keys(CLASSES) as ClassId[])
-    .map((id) => `<button class="tab ${id === tab ? "on" : ""}" data-action="board" data-id="${id}">${CLASSES[id].icon} ${CLASSES[id].name}</button>`)
+  const tabs = (["all", ...Object.keys(CLASSES)] as (ClassId | "all")[])
+    .map(
+      (id) =>
+        `<button class="tab ${id === tab ? "on" : ""}" data-action="board" data-id="${id}">${id === "all" ? "🏆 All-time" : `${CLASSES[id].icon} ${CLASSES[id].name}`}</button>`,
+    )
     .join("");
   app.innerHTML = `
     <div class="title-screen board-screen">
       <h1>🏆 Leaderboard</h1>
-      <p class="sub">Top ${TOP_N} ${CLASSES[tab].name} runs ${leaderboard.scope === "global" ? "worldwide" : "on this device"}, by wins.</p>
+      <p class="sub">Top ${TOP_N} ${tab === "all" ? "" : `${CLASSES[tab].name} `}runs ${leaderboard.scope === "global" ? "worldwide" : "on this device"}, by wins.</p>
       <div class="row tabs">${tabs}</div>
-      <section class="panel">${boardTable(list, undefined, false)}</section>
+      <section class="panel">${boardTable(list, undefined, tab === "all")}</section>
       <div class="row"><button data-action="title">⬅ Back</button></div>
     </div>`;
 }
@@ -350,7 +353,7 @@ app.addEventListener("click", (e) => {
   const seed = () => Math.floor(Math.random() * 2 ** 31);
   switch (btn.dataset.action) {
     case "board":
-      boardTab = btn.dataset.id as ClassId;
+      boardTab = btn.dataset.id as ClassId | "all";
       break;
     case "class":
       run = newRun(seed(), btn.dataset.id as ClassId);
