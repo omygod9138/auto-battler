@@ -1,5 +1,5 @@
 import type { Battle } from "./core/battle";
-import { LocalLeaderboard, TOP_N, cleanName, type Leaderboard, type ScoreEntry } from "./core/leaderboard";
+import { FallbackLeaderboard, LocalLeaderboard, SupabaseLeaderboard, TOP_N, cleanName, type Leaderboard, type ScoreEntry } from "./core/leaderboard";
 import { MAX_LEVEL, SKILLS, type SkillCat, type SkillId, type SkillKind } from "./core/skills";
 import { CLASSES, type ClassId, type Stats } from "./core/stats";
 import {
@@ -23,8 +23,10 @@ let run: RunState | null = null;
 let battle: Battle | null = null;
 let stopBattle: (() => void) | null = null;
 let battleSpeed = 1;
-// Swap for an online backend later; the UI only sees the Leaderboard interface.
-const leaderboard: Leaderboard = new LocalLeaderboard(localStorage);
+// Online board when the build has Supabase settings, else (or when offline) this device's.
+const localBoard = new LocalLeaderboard(localStorage);
+const { VITE_SUPABASE_URL: sbUrl, VITE_SUPABASE_ANON_KEY: sbKey } = import.meta.env;
+const leaderboard: Leaderboard = sbUrl && sbKey ? new FallbackLeaderboard(new SupabaseLeaderboard(sbUrl, sbKey), localBoard) : localBoard;
 /** Title-screen leaderboard view: null = class picker, "all" or a class = board tab. */
 let boardTab: ClassId | "all" | null = null;
 /** The run that just ended, for highlighting it on the game-over board. */
@@ -138,6 +140,7 @@ function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true
 }
 
 async function renderBoard(tab: ClassId | "all"): Promise<void> {
+  app.innerHTML = `<div class="title-screen"><h1>🏆 Leaderboard</h1><p class="sub">Loading…</p></div>`;
   const list = await leaderboard.top(tab === "all" ? undefined : tab);
   if (boardTab !== tab || run) return;
   const tabs = (["all", ...Object.keys(CLASSES)] as (ClassId | "all")[])
@@ -149,7 +152,7 @@ async function renderBoard(tab: ClassId | "all"): Promise<void> {
   app.innerHTML = `
     <div class="title-screen">
       <h1>🏆 Leaderboard</h1>
-      <p class="sub">Top ${TOP_N} runs on this device, by wins.</p>
+      <p class="sub">Top ${TOP_N} runs ${leaderboard.scope === "global" ? "worldwide" : "on this device"}, by wins.</p>
       <div class="row tabs">${tabs}</div>
       <section class="panel">${boardTable(list)}</section>
       <div class="row"><button data-action="title">⬅ Back</button></div>
@@ -304,8 +307,8 @@ async function recordScore(s: RunState): Promise<void> {
     at: Date.now(),
   };
   try {
-    const rank = await leaderboard.submit(entry, s.cls);
-    lastScore = { entry, rank, board: await leaderboard.top(s.cls) };
+    const { saved, rank } = await leaderboard.submit(entry, s.cls);
+    lastScore = { entry: saved, rank, board: await leaderboard.top(s.cls) };
   } catch {
     lastScore = null;
   }
@@ -320,7 +323,7 @@ function renderOver(s: RunState): void {
       <p>${CLASSES[s.cls].name} fell to the <b>${def.icon} ${def.name}</b> in round ${s.round} after <b>${wins}</b> win${wins === 1 ? "" : "s"}.</p>
       ${
         lastScore
-          ? `<h3>${lastScore.rank ? `🏆 #${lastScore.rank} on the ${CLASSES[s.cls].name} leaderboard!` : `${CLASSES[s.cls].name} leaderboard`}</h3>
+          ? `<h3>${lastScore.rank ? `🏆 #${lastScore.rank} on the ${leaderboard.scope === "global" ? "global " : ""}${CLASSES[s.cls].name} leaderboard!` : `${CLASSES[s.cls].name} leaderboard`}</h3>
              ${boardTable(lastScore.board, lastScore.entry, false)}`
           : ""
       }
