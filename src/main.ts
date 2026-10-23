@@ -294,6 +294,12 @@ function afterBattle(): void {
   battle = null;
   if (s.phase !== "over") return render();
   saveBest(s.cls, s.round - 1);
+  // Uploading the score takes a moment online; say so instead of looking frozen.
+  const btn = document.querySelector<HTMLButtonElement>('#result [data-action="next"]');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Saving score…`;
+  }
   void recordScore(s).finally(render);
 }
 

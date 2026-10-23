@@ -149,3 +149,5 @@ h2.loss { color: var(--bad); }
 .board .skills sub { font-size: 0.65em; color: var(--muted); }
 .board tr.me td { background: rgba(224, 176, 79, 0.15); }
 .over .board-wrap { margin: 8px 0 14px; }
+.spinner { display: inline-block; width: 0.9em; height: 0.9em; margin-right: 6px; vertical-align: -0.1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
