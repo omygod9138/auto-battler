@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire";
+export type SpellFxKind = "wildfire" | "storm";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -29,19 +29,130 @@ function hash(a: number, b: number, c: number): number {
 const FIRE = ["#fff6c2", "#ffd34a", "#ff9a2a", "#e8501f", "#9c2a1a"];
 const WIND = ["#eafcff", "#a9e4ef"];
 const SMOKE = ["#3d3236", "#5c4a4a"];
+const CLOUD = ["#3e4058", "#646884", "#9a9fbc", "#d2d6ea"];
+const RAIN = "#8fb8e0";
+const BOLT = ["#ffffff", "#fff59a", "#9fd8ff"];
 
-/** Draw every live effect. x is the mob's screen x, ground the screen y of the floor. */
-export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now: number, x: number, ground: number): void {
+/** Fills whole art pixels on ctx. */
+const dotter = (ctx: CanvasRenderingContext2D): Dot => (gx, gy, color, w = 1, h = 1) => {
+  ctx.fillStyle = color;
+  ctx.fillRect(gx * P, gy * P, w * P, h * P);
+};
+
+/** Draw every live effect. x is the mob's screen x, ground the screen y of the floor, h the mob's height. */
+export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now: number, x: number, ground: number, h: number): void {
+  const dot = dotter(ctx);
+  const ax = Math.round(x / P);
+  const ag = Math.round(ground / P);
+  const ah = Math.round(h / P);
   for (const f of list) {
     const age = now - f.born;
     if (age < 0 || age >= SPELL_FX_DUR[f.kind]) continue;
-    const ax = Math.round(x / P);
-    const ag = Math.round(ground / P);
-    const dot = (gx: number, gy: number, color: string, w = 1, h = 1) => {
-      ctx.fillStyle = color;
-      ctx.fillRect(gx * P, gy * P, w * P, h * P);
-    };
     if (f.kind === "wildfire") wildfire(dot, ax, ag, age);
+    if (f.kind === "storm") storm(dot, ax, ag, ah, age, ctx);
+  }
+}
+
+/** A lingering state left on the mob (not a ground zone), drawn until it runs out. Returns false if it has no pixel art yet. */
+export function drawDerivedFx(ctx: CanvasRenderingContext2D, kind: string, x: number, ground: number, h: number, t: number, fade: number): boolean {
+  if (kind !== "storm") return false;
+  const dot = dotter(ctx);
+  ctx.globalAlpha = fade;
+  // A small rain cloud hangs over the mob, waiting for fire (Plasma) or water (Electrocute).
+  const ax = Math.round(x / P) + Math.round(Math.sin(t * 2) * 2);
+  const top = Math.round(ground / P) - Math.round(h / P) - 18;
+  const frame = Math.floor(t * FPS);
+  cloud(dot, ax, top, 9, frame);
+  for (let i = 0; i < 6; i++) {
+    const fall = (frame * 2 + i * 5) % 12;
+    dot(ax - 7 + i * 3, top + 8 + fall, RAIN, 1, 2);
+  }
+  // Now and then a spark flickers inside it.
+  if (hash(frame >> 2, 1, 9) > 0.7 && frame % 4 < 2) dot(ax - 2 + Math.round(hash(frame, 2, 3) * 4), top + 4, BOLT[1], 1, 3);
+  ctx.globalAlpha = 1;
+  return true;
+}
+
+/** A lumpy cloud centred on ax, about 2*half pixels wide: lit on top, dark underneath. */
+function cloud(dot: Dot, ax: number, top: number, half: number, frame: number): void {
+  if (half < 1) return;
+  const tall = Math.round(half * 0.6) + 3;
+  const lumps = [[-0.55, 0.45, 0.45], [0, 0.15, 0.6], [0.55, 0.35, 0.5], [-0.1, 0.6, 0.6]];
+  for (let y = 0; y < tall; y++) {
+    for (let c = -half - 2; c <= half + 2; c++) {
+      let inside = false;
+      let edge = 9;
+      for (const [lx, ly, lr] of lumps) {
+        const dx = (c - lx * half) / (lr * half * 1.3);
+        const dy = (y - ly * tall) / (lr * tall);
+        const d = dx * dx + dy * dy;
+        if (d < 1) inside = true;
+        edge = Math.min(edge, d);
+      }
+      if (!inside) continue;
+      const k = y / tall;
+      const lit = k < 0.35 && edge < 0.75 - hash(c, y, frame >> 2) * 0.2;
+      dot(ax + c, top + y, k > 0.75 ? CLOUD[0] : lit ? (k < 0.15 ? CLOUD[3] : CLOUD[2]) : CLOUD[1]);
+    }
+  }
+}
+
+/** Water + Air: a thundercloud gathers over the mob and a lightning bolt cracks down into it, leaving it crackling. */
+function storm(dot: Dot, ax: number, ag: number, ah: number, age: number, ctx: CanvasRenderingContext2D): void {
+  const frame = Math.floor(age * FPS);
+  const dur = SPELL_FX_DUR.storm;
+  const top = ag - ah - 30;
+  // Cloud rolls in wide and fast, then thins out.
+  const grow = Math.min(1, age / 0.18);
+  const thin = Math.max(0, (age - (dur - 0.3)) / 0.3);
+  if (thin < 1) {
+    cloud(dot, ax, top, Math.round(20 * grow * (1 - thin * 0.6)), frame);
+    for (let i = 0; i < 18 * grow * (1 - thin); i++) {
+      const fall = (frame * 3 + i * 7) % (ag - top - 14);
+      dot(ax - 18 + Math.round(hash(i, 4, 1) * 36), top + 12 + fall, RAIN, 1, 2);
+    }
+  }
+  // Two strikes: the main bolt, then a quick re-strike down the same channel.
+  const strike = (age >= 0.16 && age < 0.42) || (age >= 0.5 && age < 0.6);
+  if (strike) {
+    const seed = age < 0.5 ? 1 : 2;
+    // The sky lights up on the first frames of each strike.
+    if (frame % 6 < 2) {
+      ctx.fillStyle = "rgba(220,235,255,0.22)";
+      ctx.fillRect(-50, -50, 2000, 1000);
+    }
+    let x = ax + Math.round((hash(seed, 0, 5) - 0.5) * 6);
+    const end = ag - Math.round(ah * 0.4);
+    for (let y = top + 11; y < end; y += 3) {
+      const nx = ax + Math.round((hash(seed, y, frame >> 1) - 0.5) * 10 * (1 - (y - top) / (end - top)));
+      const step = Math.sign(nx - x);
+      for (let k = 0; k < 3; k++) {
+        if (k === 1) x += step;
+        dot(x - 1, y + k, BOLT[2]);
+        dot(x + 2, y + k, BOLT[1]);
+        dot(x, y + k, BOLT[0], 2, 1);
+      }
+      // Side branches fork off and die out.
+      if (hash(seed, y, 77) > 0.8) {
+        const dir = hash(seed, y, 78) > 0.5 ? 1 : -1;
+        for (let b = 1; b < 6; b++) dot(x + dir * b, y + b, b < 3 ? BOLT[1] : BOLT[2]);
+      }
+    }
+    // Impact: a white burst where it lands.
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      const r = 3 + (frame % 3) * 2;
+      dot(ax + Math.round(Math.cos(a) * r), end + Math.round(Math.sin(a) * r * 0.6), i % 2 ? BOLT[0] : BOLT[1]);
+    }
+  }
+  // Stunned: little arcs crawl over the mob until the cloud clears.
+  if (age > 0.42) {
+    for (let i = 0; i < 3; i++) {
+      if (hash(i, frame, 21) < 0.4) continue;
+      const cx = ax + Math.round((hash(i, frame, 22) - 0.5) * 14);
+      const cy = ag - 4 - Math.round(hash(i, frame, 23) * (ah - 6));
+      for (let k = 0; k < 4; k++) dot(cx + k, cy + (k % 2 ? -1 : 0), k % 2 ? BOLT[1] : BOLT[2]);
+    }
   }
 }
 
