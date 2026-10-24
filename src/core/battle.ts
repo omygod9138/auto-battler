@@ -1,6 +1,6 @@
 import { Rng } from "./rng";
 import {
-  BAND_EDGE, BAND_HOLD, BAND_NAME, BAND_OF, COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, OFF_BAND, SKILL_NUM as N, SPELL_HOLD, bandAt, findReaction,
+  AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, BAND_HOLD, BAND_NAME, BAND_OF, COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, OFF_BALANCE, OFF_BAND, SKILL_NUM as N, SPELL_HOLD, UNARMED, bandAt, findReaction,
   type Band, type Combo, type Derived, type Element, type Reaction, type SkillId, type SkillLevels,
 } from "./skills";
 import type { Stats } from "./stats";
@@ -26,6 +26,11 @@ export interface Fighter {
   vuln: number;
   /** How much extra while vuln lasts. */
   vulnMult: number;
+  /** Height above the ground and upward speed, while airborne. */
+  z: number;
+  vz: number;
+  /** Seconds left that a knockback has it off balance, so an unarmed hit launches it. */
+  offBalance: number;
 }
 
 /** Wall Slam: a kick into the far wall makes the mob take this much more damage for WALL_SLAM_TIME. */
@@ -66,6 +71,10 @@ const DASH_SPEED = 16;
 /** Knockback covers this share of what's left each tick (with a floor), so it launches fast and skids to a stop. */
 const PUSH_SHARE = 0.6;
 const PUSH_MIN_STEP = 0.1;
+/** Airborne: gravity, the launch's upward speed, and the highest an upward knock can throw. Arena units. */
+const GRAVITY = 30;
+const LAUNCH_SPEED = 14;
+const SKY = 5;
 
 interface Dot {
   dps: number;
@@ -128,8 +137,8 @@ export class Battle {
   ) {
     this.rng = new Rng(seed);
     this.lv = (id) => levels[id] ?? 0;
-    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1 };
-    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1 };
+    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1, z: 0, vz: 0, offBalance: 0 };
+    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1, z: 0, vz: 0, offBalance: 0 };
     if (this.lv("manaShield")) this.hero.shield = heroStats.maxHp * N.manaShield(this.lv("manaShield")).shield;
     this.snareX = this.lv("snare") ? heroStart + BAND_EDGE.mid : null;
     // Active skills start at half cooldown so the first cast comes early.
@@ -200,6 +209,12 @@ export class Battle {
       f.stun = Math.max(0, f.stun - TICK);
       // A root waits out a knockback slide, so "immobilized after the kick" starts once it lands.
       if (f.push === 0) f.root = Math.max(0, f.root - TICK);
+      if (f.push === 0) f.offBalance = Math.max(0, f.offBalance - TICK);
+      if (f.z > 0) {
+        f.vz -= GRAVITY * TICK;
+        f.z = Math.max(0, f.z + f.vz * TICK);
+        if (f.z === 0) f.vz = 0;
+      }
       f.vuln = Math.max(0, f.vuln - TICK);
       if (f.side === "hero") this.evade = Math.max(0, this.evade - TICK);
       if (f.vuln === 0) f.vulnMult = 1;
@@ -244,7 +259,7 @@ export class Battle {
   }
 
   private act(me: Fighter, foe: Fighter): void {
-    if (me.stun > 0 || me.push !== 0) return;
+    if (me.stun > 0 || me.push !== 0 || me.z > 0) return;
     if (me.side === "hero" && this.dashing) return this.dash();
     if (me.side === "hero" && this.pending) {
       if (this.time >= this.pending.at - 1e-9) {
@@ -427,6 +442,8 @@ export class Battle {
     const c = this.combo("charge");
     if (this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Charge!", "charge")) {
       this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1) + (c?.stunAdd ?? 0));
+      this.launch();
+      this.knock(n.push);
     }
   }
 
@@ -451,9 +468,30 @@ export class Battle {
   comboNext(): string | null {
     const h = this.hero;
     if (this.outcome || h.stun > 0 || h.push !== 0) return null;
-    if (this.pending && this.time + TICK >= this.pending.at - 1e-9) return this.peekCombo(this.pending.skill)?.label ?? null;
-    if (this.dashing && this.mob.x - h.x - h.s.range <= DASH_SPEED * TICK) return this.peekCombo("charge")?.label ?? null;
+    const next = (skill: SkillId) => this.peekCombo(skill)?.label ?? (this.launches(skill) ? AIRBORNE_LABEL : null);
+    if (this.pending && this.time + TICK >= this.pending.at - 1e-9) return next(this.pending.skill);
+    if (this.dashing && this.mob.x - h.x - h.s.range <= DASH_SPEED * TICK) return next("charge");
     return null;
+  }
+
+  /** Whether that skill landing now (or next tick) would launch the mob: unarmed, on a knocked-back mob still on the ground. */
+  private launches(skill: SkillId): boolean {
+    const m = this.mob;
+    return UNARMED.includes(skill) && !this.nextDodge && m.z === 0 && m.offBalance > TICK + 1e-9;
+  }
+
+  /** Hidden combo: an unarmed hit on a knocked-back mob throws it into the air. Call before the hit's knockback. */
+  private launch(): void {
+    const m = this.mob;
+    if (m.z > 0 || m.offBalance <= 0) return;
+    m.offBalance = 0;
+    m.vz = LAUNCH_SPEED;
+    m.z = LAUNCH_SPEED * TICK;
+    this.emit({ t: this.time, type: "status", target: "mob", label: AIRBORNE_LABEL });
+  }
+
+  get airborne(): boolean {
+    return this.mob.z > 0;
   }
 
   private land(skill: SkillId): void {
@@ -503,17 +541,22 @@ export class Battle {
     if (skill === "spartanKick") {
       const n = N.spartanKick(this.lv("spartanKick"));
       this.combo("spartanKick");
+      const launches = this.launches("spartanKick");
       if (this.physical(h.s.dmg * n.mult, "bash", "Kick!", "spartanKick")) {
+        this.mob.root = Math.max(this.mob.root, n.root);
+        if (launches || this.airborne) {
+          // Kicked off its feet: it flies ×10 along the kick, so the kicker stays put.
+          if (launches) this.launch();
+          this.knock(n.push);
+          return;
+        }
         // Against the far wall the kicker bounces back instead, so the gap still opens,
         // and the mob is slammed into the wall.
         const slide = Math.min(n.push, ARENA.length - this.mob.x);
         this.mob.push += slide;
-        this.mob.root = Math.max(this.mob.root, n.root);
+        this.mob.offBalance = OFF_BALANCE;
         h.push -= n.push - slide;
-        if (slide < n.push - 1e-9) {
-          this.makeVulnerable(WALL_SLAM_MULT, WALL_SLAM_TIME);
-          this.emit({ t: this.time, type: "status", target: "mob", label: "Wall Slam!" });
-        }
+        if (slide < n.push - 1e-9) this.wallSlam();
       }
     }
   }
@@ -619,9 +662,26 @@ export class Battle {
     this.mob.vuln = Math.max(this.mob.vuln, dur);
   }
 
-  /** Push the mob away; the far wall stops it. */
-  private knock(dist: number): void {
-    this.mob.push += Math.max(0, Math.min(dist, ARENA.length - this.mob.x - this.mob.push));
+  private wallSlam(): void {
+    this.makeVulnerable(WALL_SLAM_MULT, WALL_SLAM_TIME);
+    this.emit({ t: this.time, type: "status", target: "mob", label: "Wall Slam!" });
+  }
+
+  /** Knock the mob back along the attack: dist away from the hero, up into the air. It is left off balance.
+   * Airborne it flies AIR_KNOCK_MULT× as far, and slams into the far wall if that's in the way; the sky caps it at SKY. */
+  private knock(dist: number, up = 0): void {
+    const m = this.mob;
+    const air = m.z > 0 ? AIR_KNOCK_MULT : 1;
+    const room = Math.max(0, ARENA.length - m.x - m.push);
+    m.push += Math.min(dist * air, room);
+    if (air > 1 && dist * air > room + 1e-9) this.wallSlam();
+    if (up > 0) {
+      // Throw it up to `up` higher (×10 airborne): the launch speed that peaks there.
+      const peak = Math.min(SKY, m.z + (m.vz > 0 ? (m.vz * m.vz) / (2 * GRAVITY) : 0) + up * air);
+      m.vz = Math.sqrt(2 * GRAVITY * Math.max(0, peak - m.z));
+      m.z = Math.max(m.z, 1e-3);
+    }
+    if (m.z === 0) m.offBalance = OFF_BALANCE;
   }
 
   /** The ground zone the mob is standing in, if any. */

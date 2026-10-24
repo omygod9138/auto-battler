@@ -12,6 +12,8 @@ export interface MeleeFx {
   big?: boolean;
   /** Screen px from the mob's x; negative is toward the hero. */
   dx?: number;
+  /** Stays on the floor while the mob is airborne, instead of rising with it. */
+  floor?: boolean;
 }
 
 interface SheetJson {
@@ -97,8 +99,8 @@ export function preloadMeleeFx(): void {
   for (const k of Object.keys(LOOK) as MeleeFxKind[]) load(k);
 }
 
-/** Draw every live effect. x is the mob's screen x, ground the screen y of the floor, h the mob's height. */
-export function drawMeleeFx(ctx: CanvasRenderingContext2D, list: MeleeFx[], now: number, x: number, ground: number, h: number): void {
+/** Draw every live effect. x is the mob's screen x, ground the screen y of the floor, h the mob's height, lift how far it is off the floor. */
+export function drawMeleeFx(ctx: CanvasRenderingContext2D, list: MeleeFx[], now: number, x: number, ground: number, h: number, lift = 0): void {
   const smooth = ctx.imageSmoothingEnabled;
   ctx.imageSmoothingEnabled = false;
   for (const f of list) {
@@ -113,7 +115,7 @@ export function drawMeleeFx(ctx: CanvasRenderingContext2D, list: MeleeFx[], now:
     const w = frame.w * k;
     const hh = frame.h * k;
     const cx = Math.round(x + (f.dx ?? 0) - w * s.pivot.x);
-    const cy = Math.round(ground - h * look.at - hh * s.pivot.y);
+    const cy = Math.round(ground - (f.floor ? 0 : lift) - h * look.at - hh * s.pivot.y);
     ctx.drawImage(s.img, frame.x, frame.y, frame.w, frame.h, cx, cy, w, hh);
   }
   ctx.imageSmoothingEnabled = smooth;
