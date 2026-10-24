@@ -16,6 +16,7 @@ import { playBattle } from "./ui/battleView";
 import { portrait } from "./ui/characters";
 import { startSandbox } from "./ui/sandbox";
 import { loadSprites } from "./ui/sprites";
+import { playTitle } from "./ui/titleArt";
 
 const app = document.getElementById("app")!;
 
@@ -27,8 +28,11 @@ let battleSpeed = 1;
 const localBoard = new LocalLeaderboard(localStorage);
 const { VITE_SUPABASE_URL: sbUrl, VITE_SUPABASE_ANON_KEY: sbKey } = import.meta.env;
 const leaderboard: Leaderboard = sbUrl && sbKey ? new FallbackLeaderboard(new SupabaseLeaderboard(sbUrl, sbKey), localBoard) : localBoard;
-/** Title-screen leaderboard view: null = class picker, "all" = all-time across classes, else that class's board. */
+/** Before a run: the title menu, or the class picker its Start leads to. */
+let screen: "title" | "classes" = "title";
+/** Leaderboard window over the title: null = closed, "all" = all-time across classes, else that class's board. */
 let boardTab: ClassId | "all" | null = null;
+let stopTitle: (() => void) | null = null;
 /** The run that just ended, for highlighting it on the game-over board. */
 let lastScore: { entry: ScoreEntry; rank: number | null; board: ScoreEntry[] } | null = null;
 const NAME_KEY = "fjord-player-name";
@@ -76,26 +80,50 @@ const KIND_LABEL: Record<SkillKind, string> = { passive: "Passive", proc: "On hi
 const CAT_LABEL: Record<SkillCat, string> = { attack: "⚔️ Attack", defense: "🛡️ Defense", passive: "✨ Passive" };
 
 function render(): void {
-  if (!run && boardTab) {
-    void renderBoard(boardTab);
-    return;
+  if (run || screen !== "title") {
+    stopTitle?.();
+    stopTitle = null;
   }
-  if (!run) return renderTitle();
+  if (!run) return screen === "title" ? renderTitle() : renderClasses();
   if (run.phase === "choose") return renderChoose(run);
   if (run.phase === "battle") return renderBattle(run);
   return renderOver(run);
 }
 
+/** RPG-style title: the cover scene animating behind a Start / Leaderboard menu. */
 function renderTitle(): void {
+  if (!app.querySelector(".title-menu")) {
+    app.innerHTML = `
+      <div class="title-menu">
+        <canvas class="title-art" aria-hidden="true"></canvas>
+        <h1 class="sr-only">Fjord Battlegrounds</h1>
+        <nav class="menu">
+          <button class="menu-btn" data-action="start">Start</button>
+          <button class="menu-btn" data-action="board" data-id="all">Leaderboard</button>
+        </nav>
+        <div id="board-modal"></div>
+      </div>`;
+    const root = app.querySelector<HTMLElement>(".title-menu")!;
+    // The menu sits in the band between the logo and the ground.
+    stopTitle = playTitle(root.querySelector("canvas")!, (logoEnd, ground) => {
+      root.style.setProperty("--logo-end", `${logoEnd * 100}%`);
+      root.style.setProperty("--ground", `${ground * 100}%`);
+    });
+    app.querySelector<HTMLButtonElement>(".menu-btn")?.focus();
+  }
+  void renderBoard();
+}
+
+function renderClasses(): void {
   const best = loadBest();
   app.innerHTML = `
     <div class="title-screen">
-      <h1>⚔️ Fjord Battlegrounds</h1>
+      <h1>Choose your hero</h1>
       <p class="sub">Pick a skill. Beat the mob. Each win brings a stronger one. One loss and it's over.</p>
       ${import.meta.env.DEV ? `<p><a href="?sandbox">🧪 Sandbox</a> <span class="muted">(dev only)</span></p>` : ""}
       <div class="row name-row">
         <label>Name <input id="player-name" maxlength="16" placeholder="Hero" value="${esc(playerName())}"></label>
-        <button data-action="board" data-id="all">🏆 Leaderboard</button>
+        <button data-action="home">⬅ Back</button>
       </div>
       <div class="cards three">
         ${(Object.keys(CLASSES) as ClassId[])
@@ -145,24 +173,38 @@ function boardTable(list: ScoreEntry[], highlight?: ScoreEntry, showClass = true
   </table></div>`;
 }
 
-async function renderBoard(tab: ClassId | "all"): Promise<void> {
-  app.innerHTML = `<div class="title-screen"><h1>🏆 Leaderboard</h1><p class="sub">Loading…</p></div>`;
-  const list = await leaderboard.top(tab === "all" ? undefined : tab);
-  if (boardTab !== tab || run) return;
+/** The leaderboard as a wooden notice board over the title, with the sheet for `boardTab` pinned on it. */
+async function renderBoard(): Promise<void> {
+  const host = document.getElementById("board-modal");
+  if (!host) return;
+  const tab = boardTab;
+  if (!tab) {
+    host.innerHTML = "";
+    return;
+  }
   const tabs = (["all", ...Object.keys(CLASSES)] as (ClassId | "all")[])
     .map(
       (id) =>
         `<button class="tab ${id === tab ? "on" : ""}" data-action="board" data-id="${id}">${id === "all" ? "🏆 All-time" : `${CLASSES[id].icon} ${CLASSES[id].name}`}</button>`,
     )
     .join("");
-  app.innerHTML = `
-    <div class="title-screen board-screen">
-      <h1>🏆 Leaderboard</h1>
-      <p class="sub">Top ${TOP_N} ${tab === "all" ? "" : `${CLASSES[tab].name} `}runs ${leaderboard.scope === "global" ? "worldwide" : "on this device"}, by wins.</p>
-      <div class="row tabs">${tabs}</div>
-      <section class="panel">${boardTable(list, undefined, tab === "all")}</section>
-      <div class="row"><button data-action="title">⬅ Back</button></div>
+  const sheet = (body: string) => `
+    <div class="modal-bg" data-action="close-board">
+      <section class="notice" role="dialog" aria-modal="true" aria-labelledby="notice-title">
+        <h2 class="notice-sign" id="notice-title">Leaderboard</h2>
+        <div class="notice-tabs">${tabs}</div>
+        <div class="parchment">${body}</div>
+        <button class="menu-btn notice-close" data-action="close-board">Close</button>
+      </section>
     </div>`;
+  // Keep the open sheet while the next tab loads, so the window doesn't flicker shut.
+  if (!host.querySelector(".notice")) host.innerHTML = sheet(`<p class="loading">Loading…</p>`);
+  const list = await leaderboard.top(tab === "all" ? undefined : tab);
+  if (boardTab !== tab || run || screen !== "title") return;
+  host.innerHTML = sheet(`
+    <p class="sub">Top ${TOP_N} ${tab === "all" ? "" : `${CLASSES[tab].name} `}runs ${leaderboard.scope === "global" ? "worldwide" : "on this device"}, by wins.</p>
+    ${boardTable(list, undefined, tab === "all")}`);
+  host.querySelector<HTMLButtonElement>(".notice-close")?.focus({ preventScroll: true });
 }
 
 function statLine(s: Stats): string {
@@ -355,6 +397,17 @@ app.addEventListener("click", (e) => {
     case "board":
       boardTab = btn.dataset.id as ClassId | "all";
       break;
+    case "close-board":
+      // Clicks inside the sheet bubble up to the backdrop; only the backdrop itself closes it.
+      if (btn.classList.contains("modal-bg") && e.target !== btn) return;
+      boardTab = null;
+      break;
+    case "start":
+      screen = "classes";
+      break;
+    case "home":
+      screen = "title";
+      break;
     case "class":
       run = newRun(seed(), btn.dataset.id as ClassId);
       break;
@@ -380,10 +433,17 @@ app.addEventListener("click", (e) => {
       break;
     case "title":
       run = null;
-      boardTab = null;
+      screen = "classes";
       break;
   }
   render();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && boardTab && !run && screen === "title") {
+    boardTab = null;
+    render();
+  }
 });
 
 app.addEventListener("change", (e) => {
