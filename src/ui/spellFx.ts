@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -36,6 +36,7 @@ const MUD = ["#2a1c12", "#4a3322", "#6e4c2c", "#94703f", "#d8c09a", "#7f8c8a"];
 const PLASMA = ["#ffffff", "#ffd6ff", "#ff7ae0", "#c23cff", "#5a1a9a"];
 const CLAY = ["#4a2214", "#7e3e22", "#b0603a", "#d98c5a", "#f2be92"];
 const STEAM = ["#f2f4f8", "#c9ced8"];
+const GLASS = ["#ffffff", "#d8f6ff", "#8fdcf0", "#4aa8c8", "#2a6a8a"];
 const WATER = ["#e6f6ff", "#8fd0ff", "#4a90d0"];
 const SAND = ["#f4e2a8", "#d9b46a", "#b08848", "#7a5a32"];
 
@@ -60,6 +61,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "mud") mudSplash(dot, ax, ag, ah, age);
     if (f.kind === "plasma") plasma(dot, ax, ag, ah, age);
     if (f.kind === "clay") clay(dot, ax, ag, ah, age);
+    if (f.kind === "glass") glass(dot, ax, ag, ah, age);
   }
 }
 
@@ -499,5 +501,74 @@ function clay(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
   if (rise === 1 && crumble === 0 && frame % 7 < 3) {
     const t = (frame % 7) / 3;
     dot(ax + (frame % 2 ? 7 : -8), ag - 4 - Math.round(hash(frame >> 3, 1, 37) * shellH * 0.6) + Math.round(t * 6), CLAY[1]);
+  }
+}
+
+/** A glass shard: a short line in one of four directions, bright on one end. */
+function shard(dot: Dot, x: number, y: number, dir: number, len: number): void {
+  const [dx, dy] = [[1, 0], [1, -1], [0, -1], [-1, -1]][dir & 3];
+  for (let k = 0; k < len; k++) dot(x + dx * k, y + dy * k, k === 0 ? GLASS[0] : k === len - 1 ? GLASS[3] : GLASS[2]);
+}
+
+/** Sandstorm + Fire: the swirling sand heats white-hot, fuses into a shell of glass round the mob, and shatters. */
+function glass(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const heat = [SAND[1], FIRE[2], FIRE[1], FIRE[0]];
+  // Once fused, a faceted glass shell outlines the mob until it shatters.
+  if (age >= 0.3 && age < 0.55) {
+    const rx = 13;
+    const ry = Math.round(ah * 0.6);
+    const cy = ag - ry;
+    for (let i = 0; i < 72; i++) {
+      const a = (i / 72) * 6.28;
+      const x = ax + Math.round(Math.cos(a) * rx);
+      const y = cy + Math.round(Math.sin(a) * ry);
+      if (y >= ag) continue;
+      dot(x, y, i % 9 === 0 ? GLASS[0] : Math.cos(a) < 0 ? GLASS[1] : GLASS[3]);
+      // Facet lines run inward from every few edge pixels.
+      if (i % 9 === 4) for (let k = 1; k < 4; k++) dot(x - Math.round(Math.cos(a) * k), y - Math.round(Math.sin(a) * k * 0.6), GLASS[2]);
+    }
+  }
+  for (let i = 0; i < 48; i++) {
+    const h = hash(i, 11, 3);
+    const baseY = ag - 2 - Math.round(h * (ah + 2));
+    const r = 9 + Math.round(h * 5);
+    const a0 = hash(i, 12, 5) * 6.28;
+    if (age < 0.3) {
+      // Grains spin faster and glow as they heat.
+      const a = a0 + age * (6 + age * 30);
+      const x = ax + Math.round(Math.cos(a) * r);
+      const y = baseY + Math.round(Math.sin(a) * 2);
+      dot(x, y, heat[Math.min(3, Math.floor((age / 0.3) * 4))], 2, 1);
+      continue;
+    }
+    // Then they freeze in place as shards of a glass shell.
+    const a = a0 + 0.3 * 15;
+    const x0 = ax + Math.round(Math.cos(a) * r);
+    const y0 = baseY + Math.round(Math.sin(a) * 2);
+    const dir = Math.floor(hash(i, 13, 7) * 4);
+    if (age < 0.55) {
+      shard(dot, x0, y0, dir, 4);
+      // A glint sweeps up the shell.
+      const sweep = ag - Math.round(((age - 0.3) / 0.25) * (ah + 4));
+      if (Math.abs(y0 - sweep) < 2) dot(x0, y0 - 1, GLASS[0], 2, 1);
+      continue;
+    }
+    // Shatter: shards fly outward and fall, tumbling.
+    const t = age - 0.55;
+    const out = Math.sign(x0 - ax) || 1;
+    const x = x0 + Math.round(out * t * (30 + h * 40));
+    const y = y0 - Math.round(t * (25 + hash(i, 14, 9) * 25)) + Math.round(t * t * 140);
+    if (y > ag) continue;
+    shard(dot, x, y, dir + Math.floor(t * 10 + i), i % 2 ? 4 : 3);
+  }
+  // A white flash ring at the moment it shatters.
+  if (age >= 0.55 && age < 0.75) {
+    const r = 6 + Math.round((age - 0.55) * 90);
+    for (let i = 0; i < 32; i++) {
+      const a = (i / 32) * 6.28;
+      if (hash(i, frame, 15) > 0.7) continue;
+      dot(ax + Math.round(Math.cos(a) * r), ag - Math.round(ah * 0.5) + Math.round(Math.sin(a) * r * 0.8), i % 2 ? GLASS[0] : GLASS[1], 2, 1);
+    }
   }
 }
