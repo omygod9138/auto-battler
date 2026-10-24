@@ -2,7 +2,7 @@ import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } fr
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
 import { drawBurnFx, drawDerivedFx, drawProjectile, drawRootFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
-import { drawMeleeFx, meleeFxDur, preloadMeleeFx, type MeleeFx } from "./meleeFx";
+import { drawMeleeFx, drawStunStars, meleeFxDur, preloadMeleeFx, type MeleeFx } from "./meleeFx";
 import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
@@ -195,8 +195,8 @@ export function playBattle(
           scene.anim[attacker].lunge = scene.now;
           scene.melee.push({ kind: "slash", born: scene.now, big: e.crit });
           scene.melee.push({ kind: "hit", born: scene.now + 0.06, big: e.crit, dx: -12 });
-        } else if (e.skill === "heavyStrike") {
-          // Heavy Strike draws its own sprite effects in skillImpact.
+        } else if (e.skill === "heavyStrike" || e.skill === "shieldBash") {
+          // These skills draw their own sprite effects in skillImpact.
           scene.anim[attacker].lunge = scene.now;
         } else if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
           scene.anim[attacker].lunge = scene.now;
@@ -579,10 +579,12 @@ function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 
   const hit = x - dir * 14;
   switch (skill) {
     case "shieldBash":
-      scene.add({ kind: "ring", dur: 0.45, x: hit, y, color: "#bfe6ff", size: 80, dir });
-      scene.add({ kind: "ring", dur: 0.3, x: hit, y, color: "#ffffff", size: 44, dir });
-      scene.burst(hit, y, 28, "#d8f0ff", 260, 200, 4);
-      scene.shake = Math.max(scene.shake, 9);
+      // The shield's face meets the mob: a white flash and a ring of force, then stun stars circle its head.
+      // As the Charge → Bash combo it flashes the screen and hits bigger.
+      scene.melee.push({ kind: "shieldBash", born: scene.now, big: combo, dx: -14 });
+      scene.melee.push({ kind: "hit", born: scene.now + 0.04, dx: -14 });
+      if (combo) scene.add({ kind: "flash", dur: 0.18, x: 0, y: 0, color: "rgba(220,240,255,0.45)", size: 0, dir });
+      scene.shake = Math.max(scene.shake, combo ? 13 : 9);
       break;
     case "heavyStrike":
       // A gold overhead cleave, then the ground cracks under the blow. As a combo finisher it cuts
@@ -791,9 +793,12 @@ function drawBars(ctx: CanvasRenderingContext2D, x: number, size: number, hpFrac
   ctx.font = "16px sans-serif";
   ctx.textAlign = "center";
   if (stunned) {
-    for (let i = 0; i < 3; i++) {
-      const a = t * 5 + (i * Math.PI * 2) / 3;
-      ctx.fillText("✦", x + Math.cos(a) * 18, top - 10 + Math.sin(a) * 5);
+    // Pixel stun stars circle the head; glyphs stand in until the sheet loads.
+    if (!drawStunStars(ctx, t, x, top - 8)) {
+      for (let i = 0; i < 3; i++) {
+        const a = t * 5 + (i * Math.PI * 2) / 3;
+        ctx.fillText("✦", x + Math.cos(a) * 18, top - 10 + Math.sin(a) * 5);
+      }
     }
   } else if (rooted) ctx.fillText("🌿", x, top - 8);
 }

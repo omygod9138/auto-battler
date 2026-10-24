@@ -1,7 +1,7 @@
 // Warrior melee effects: PixelLab vfx_workbench sprite sheets (src/assets/vfx/<name>/), played once each.
 // Sheets are TexturePacker JSON + PNG; blank trailing frames in an export are dropped at load.
 
-export type MeleeFxKind = "slash" | "hit" | "shockwave" | "heavySlash" | "groundCrack";
+export type MeleeFxKind = "slash" | "hit" | "shockwave" | "heavySlash" | "groundCrack" | "shieldBash" | "stunStars";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface MeleeFx {
@@ -35,6 +35,8 @@ const LOOK: Record<MeleeFxKind, { file: string; at: number; scale: number }> = {
   shockwave: { file: "warrior_shockwave/warrior-shockwave", at: 0, scale: 1 },
   heavySlash: { file: "heavy_slash/heavy-slash", at: 0.55, scale: 1 },
   groundCrack: { file: "ground_crack/ground-crack", at: 0, scale: 1 },
+  shieldBash: { file: "shield_bash/shield-bash", at: 0.55, scale: 1 },
+  stunStars: { file: "stun_stars/stun-stars", at: 1, scale: 1 },
 };
 
 const sheets = new Map<MeleeFxKind, Sheet>();
@@ -113,4 +115,21 @@ export function drawMeleeFx(ctx: CanvasRenderingContext2D, list: MeleeFx[], now:
     ctx.drawImage(s.img, frame.x, frame.y, frame.w, frame.h, cx, cy, w, hh);
   }
   ctx.imageSmoothingEnabled = smooth;
+}
+
+/** Looping stun stars centred on (x, y), e.g. just above a stunned fighter's head. Returns false until loaded. */
+export function drawStunStars(ctx: CanvasRenderingContext2D, now: number, x: number, y: number): boolean {
+  const s = load("stunStars");
+  if (!s?.ready || !s.frames.length) return false;
+  const total = s.frames.reduce((a, f) => a + f.dur, 0);
+  let age = now % total;
+  const frame = s.frames.find((fr) => (age -= fr.dur) < 0) ?? s.frames[0];
+  const smooth = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  // Drawn at 2× so the small stars read against the snowy backdrop.
+  const w = frame.w * 2;
+  const h = frame.h * 2;
+  ctx.drawImage(s.img, frame.x, frame.y, frame.w, frame.h, Math.round(x - w * s.pivot.x), Math.round(y - h * s.pivot.y), w, h);
+  ctx.imageSmoothingEnabled = smooth;
+  return true;
 }
