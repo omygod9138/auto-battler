@@ -744,8 +744,9 @@ function drawFighter(ctx: CanvasRenderingContext2D, layer: Layer, p: FighterPose
     ctx.globalAlpha = 1;
   }
   if (p.frozen) {
-    ctx.globalAlpha = 0.45;
-    ctx.drawImage(layer.tinted("#9fe0ff"), -Layer.OX, -Layer.OY);
+    // Locked in obsidian: a dark glassy tint.
+    ctx.globalAlpha = 0.4;
+    ctx.drawImage(layer.tinted("#3a3354"), -Layer.OX, -Layer.OY);
     ctx.globalAlpha = 1;
   }
   ctx.restore();
