@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian" | "electrocute";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian" | "electrocute" | "fireball";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -14,7 +14,7 @@ export interface SpellFx {
 /** Effects by reaction name. */
 export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam", Eruption: "eruption", Obsidian: "obsidian", Electrocute: "electrocute" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4, electrocute: 1.7 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4, electrocute: 1.7, fireball: 0.8 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -69,6 +69,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "eruption") eruption(dot, ax, ag, ah, age);
     if (f.kind === "obsidian") obsidian(dot, ax, ag, ah, age);
     if (f.kind === "electrocute") electrocute(dot, ax, ag, ah, age, ctx);
+    if (f.kind === "fireball") fireballBlast(dot, ax, ag, ah, age);
   }
 }
 
@@ -949,6 +950,84 @@ function electrocute(dot: Dot, ax: number, ag: number, ah: number, age: number, 
       if (hash(i, frame, 88) < 0.5) continue;
       const [x, y] = pts[i % pts.length];
       dot(x + Math.round((hash(i, frame, 89) - 0.5) * 6), y + Math.round((hash(i, frame, 90) - 0.5) * 6), BOLT[1]);
+    }
+  }
+}
+
+/** A projectile in flight, centred on screen (x, y) and heading dir (1 = right). Returns false if it has no pixel art yet. */
+export function drawProjectile(ctx: CanvasRenderingContext2D, fx: string, x: number, y: number, dir: number, t: number): boolean {
+  if (fx !== "fireball") return false;
+  const dot = dotter(ctx);
+  const cx = Math.round(x / P);
+  const cy = Math.round(y / P);
+  const frame = Math.floor(t * FPS * 2);
+  // Flame tail streams out behind, flickering and narrowing.
+  for (let k = 1; k < 12; k++) {
+    const w = Math.max(0, Math.round(3 - k * 0.3 + (hash(k, frame, 91) - 0.5) * 2));
+    for (let r = -w; r <= w; r++) {
+      if (hash(k, r, frame) < k / 14) continue;
+      dot(cx - dir * (k + 2), cy + r + Math.round(Math.sin(k + frame) * 0.6), FIRE[Math.min(4, 1 + Math.floor(k / 3) + (Math.abs(r) === w ? 1 : 0))]);
+    }
+  }
+  // Hot core: white middle, yellow, orange rim.
+  disc(dot, cx, cy, 3, (d) => (d < 0.35 ? FIRE[0] : d < 0.7 ? FIRE[1] : FIRE[2]));
+  dot(cx + dir * 4, cy, FIRE[2]);
+  return true;
+}
+
+/** Fireball lands: a round blast of flame, a puff of smoke rolling up and embers raining out. */
+function fireballBlast(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const cy = ag - Math.round(ah * 0.5);
+  // Blast: a fireball swells and burns out from the middle.
+  if (age < 0.35) {
+    const k = age / 0.35;
+    const r = 4 + Math.round(easeOut(Math.min(1, k * 2)) * 9);
+    const hole = k * 1.1;
+    disc(dot, ax, cy, r, (d, x, y) => {
+      if (d < hole - 0.2 + hash(x, y, frame) * 0.3) return null;
+      const heat = d - k * 0.5 + hash(x, y, frame) * 0.25;
+      return FIRE[Math.max(0, Math.min(4, Math.floor(heat * 4 + k * 2)))];
+    });
+  }
+  // Smoke rolls up out of it.
+  for (let i = 0; i < 6; i++) {
+    const t = age - 0.12 - hash(i, 1, 92) * 0.15;
+    if (t < 0 || t > 0.6) continue;
+    const x = ax + Math.round((hash(i, 2, 92) - 0.5) * 14);
+    disc(dot, x, cy - 4 - Math.round(t * 36), 2 + Math.round(t * 5), (d, px, py) => (hash(px + i, py, frame >> 1) < (t / 0.6) * 0.9 + d * 0.2 ? null : SMOKE[d < 0.5 ? 1 : 0]));
+  }
+  // Embers fly out and fall.
+  for (let i = 0; i < 14; i++) {
+    const t = age - 0.03;
+    if (t < 0) break;
+    const a = hash(i, 3, 93) * Math.PI * 2;
+    const v = 30 + hash(i, 4, 93) * 50;
+    const x = ax + Math.round(Math.cos(a) * v * t);
+    const y = cy + Math.round(Math.sin(a) * v * t * 0.8 + 70 * t * t);
+    if (y >= ag || hash(i, 5, 93) < t / 0.8) continue;
+    dot(x, y, i % 3 ? FIRE[1] : FIRE[0]);
+  }
+}
+
+/** Little flames licking up the mob while it burns. */
+export function drawBurnFx(ctx: CanvasRenderingContext2D, x: number, ground: number, h: number, t: number): void {
+  const dot = dotter(ctx);
+  const ax = Math.round(x / P);
+  const ag = Math.round(ground / P);
+  const ah = Math.round(h / P);
+  const frame = Math.floor(t * FPS);
+  for (let i = 0; i < 4; i++) {
+    // Each tongue of flame has its own spot, life and sway.
+    const life = (t * 1.6 + hash(i, 0, 94)) % 1;
+    const cycle = Math.floor(t * 1.6 + hash(i, 0, 94));
+    const fx = ax + Math.round((hash(i, cycle, 95) - 0.5) * 12);
+    const fy = ag - 3 - Math.round(hash(i, cycle, 96) * ah * 0.7);
+    const tall = Math.round(5 * Math.sin(life * Math.PI));
+    for (let y = 0; y < tall; y++) {
+      const sway = Math.round(Math.sin(frame * 0.8 + i + y) * 0.6);
+      dot(fx + sway, fy - y, FIRE[Math.min(4, (tall - 1 - y) === 0 ? 0 : y === 0 ? 3 : 1 + (y % 2))]);
+      if (y === 0) dot(fx + sway + 1, fy, FIRE[2]);
     }
   }
 }
