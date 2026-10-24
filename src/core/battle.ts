@@ -78,7 +78,7 @@ const SKY = 3.5;
 /** In an Uppercut Flurry the Warrior hangs this far below the mob. */
 const HERO_BELOW = 0.4;
 /** A Ground Slam hurls the mob down this fast and bounces the Warrior up at HOP_SPEED, to hang
- * SLAM_HANG seconds before a downward thrust at THRUST_SPEED for THRUST_MULT × hero damage. */
+ * SLAM_HANG seconds before a downward thrust at THRUST_SPEED for THRUST_MULT × the Heavy Strike's damage. */
 const SLAM_SPEED = 12;
 const HOP_SPEED = 4;
 const SLAM_HANG = 0.25;
@@ -104,7 +104,7 @@ export class Battle {
   /** The hero is mid Charge dash. */
   dashing = false;
   /** After a Ground Slam: the Warrior bounces up, hangs, then thrusts down onto the mob. */
-  slamDown: { phase: "hop" | "hang" | "thrust"; at: number; slammed: boolean } | null = null;
+  slamDown: { phase: "hop" | "hang" | "thrust"; at: number; slammed: boolean; /** The Heavy Strike's damage multiplier, for the thrust. */ mult: number } | null = null;
   /** Slashes left of an Uppercut Flurry, and when the next one lands. */
   private flurry: { left: number; at: number; /** Heavy Strike takes the last hit; its dodge is already rolled. */ slam?: boolean } | null = null;
   /** A wound-up skill waiting to land. */
@@ -605,6 +605,8 @@ export class Battle {
     if (this.slamNext()) {
       // Heavy Strike takes the last slash: a powerful blow that drives the mob into the ground.
       const landed = !this.nextDodge;
+      // The thrust is part of the same blow, so it carries Heavy Strike's multiplier and combo bonus.
+      const mult = N.heavyStrike(this.lv("heavyStrike")).mult * (this.peekCombo("heavyStrike")?.dmgMult ?? 1);
       this.cds.set("heavyStrike", this.cooldown("heavyStrike"));
       this.heroAttack(true);
       this.flurry = null;
@@ -613,7 +615,7 @@ export class Battle {
       // The blow hurls the mob down and bounces the Warrior up, to hang there and thrust down after it.
       m.vz = -SLAM_SPEED;
       h.vz = HOP_SPEED;
-      this.slamDown = { phase: "hop", at: 0, slammed: false };
+      this.slamDown = { phase: "hop", at: 0, slammed: false, mult };
       this.slamStep();
       return;
     }
@@ -651,7 +653,7 @@ export class Battle {
       }
     }
     if (sl.phase === "thrust" && h.z === 0) {
-      this.physical(h.s.dmg * THRUST_MULT, "slash", THRUST_LABEL);
+      this.physical(h.s.dmg * THRUST_MULT * sl.mult, "slash", THRUST_LABEL);
       this.slamDown = null;
       this.recover();
     }

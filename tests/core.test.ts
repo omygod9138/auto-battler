@@ -589,5 +589,9 @@ describe("hidden airborne combo", () => {
     stepUntil(b, () => b.events.some((e) => e.type === "damage" && e.label === THRUST_LABEL));
     expect(b.hero.z).toBe(0);
     expect(b.slamDown).toBeNull();
+    // It hits as hard as the Heavy Strike itself, combo bonus included (the wall never dodges, crits aside).
+    const thrust = b.events.find((e) => e.type === "damage" && e.label === THRUST_LABEL)!;
+    const heavyHit = heavy.type === "damage" && heavy;
+    if (thrust.type === "damage" && heavyHit && !thrust.crit && !heavyHit.crit) expect(thrust.amount).toBeCloseTo(heavyHit.amount, 5);
   });
 });
