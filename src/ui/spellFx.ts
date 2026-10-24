@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -37,6 +37,7 @@ const PLASMA = ["#ffffff", "#ffd6ff", "#ff7ae0", "#c23cff", "#5a1a9a"];
 const CLAY = ["#4a2214", "#7e3e22", "#b0603a", "#d98c5a", "#f2be92"];
 const STEAM = ["#f2f4f8", "#c9ced8"];
 const GLASS = ["#ffffff", "#d8f6ff", "#8fdcf0", "#4aa8c8", "#2a6a8a"];
+const LAVA = ["#2a0e08", "#5a1a0c", "#c2380f", "#ff7a1a", "#ffc23a", "#fff1a0"];
 const WATER = ["#e6f6ff", "#8fd0ff", "#4a90d0"];
 const SAND = ["#f4e2a8", "#d9b46a", "#b08848", "#7a5a32"];
 
@@ -62,14 +63,15 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "plasma") plasma(dot, ax, ag, ah, age);
     if (f.kind === "clay") clay(dot, ax, ag, ah, age);
     if (f.kind === "glass") glass(dot, ax, ag, ah, age);
+    if (f.kind === "lava") lavaBurst(dot, ax, ag, age);
   }
 }
 
 /** A ground zone between screen x0 and x1. Returns false if it has no pixel art yet. */
 export function drawZoneFx(ctx: CanvasRenderingContext2D, kind: string, x0: number, x1: number, ground: number, t: number, fade: number): boolean {
-  if (kind !== "mud") return false;
+  if (kind !== "mud" && kind !== "lava") return false;
   ctx.globalAlpha = fade;
-  mudPuddle(dotter(ctx), Math.round((x0 + x1) / 2 / P), Math.round((x1 - x0) / 2 / P), Math.round(ground / P), t);
+  (kind === "mud" ? mudPuddle : lavaPool)(dotter(ctx), Math.round((x0 + x1) / 2 / P), Math.round((x1 - x0) / 2 / P), Math.round(ground / P), t);
   ctx.globalAlpha = 1;
   return true;
 }
@@ -569,6 +571,82 @@ function glass(dot: Dot, ax: number, ag: number, ah: number, age: number): void 
       const a = (i / 32) * 6.28;
       if (hash(i, frame, 15) > 0.7) continue;
       dot(ax + Math.round(Math.cos(a) * r), ag - Math.round(ah * 0.5) + Math.round(Math.sin(a) * r * 0.8), i % 2 ? GLASS[0] : GLASS[1], 2, 1);
+    }
+  }
+}
+
+/** Fire + Earth: the ground under the mob splits along glowing cracks and magma spurts out. */
+function lavaBurst(dot: Dot, ax: number, ag: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  // Cracks race outward along the ground.
+  const reach = Math.round(Math.min(1, age / 0.2) * 22);
+  const cool = Math.max(0, (age - 0.6) / 0.4);
+  for (const side of [-1, 1]) {
+    let y = ag;
+    for (let k = 0; k < reach; k++) {
+      if (hash(k, side, 41) > 0.7) y = ag + Math.round(hash(k, side, 42) * 2);
+      if (hash(k, side, 43) < cool) continue;
+      dot(ax + side * k, y, k < reach - 2 ? (frame % 2 ? LAVA[4] : LAVA[3]) : LAVA[5]);
+      if (k % 6 === 3) dot(ax + side * k, y + 1, LAVA[2]);
+    }
+  }
+  // Magma globs spurt up with glowing tails and splash back down.
+  const t = age - 0.1;
+  if (t < 0) return;
+  for (let i = 0; i < 18; i++) {
+    const side = i % 2 ? 1 : -1;
+    const vx = side * (4 + hash(i, 3, 44) * 26);
+    const vy = 60 + hash(i, 4, 45) * 60;
+    const x = ax + Math.round(vx * t);
+    const y = ag - 1 - Math.round(vy * t - 150 * t * t);
+    if (y >= ag) {
+      if (t < 0.8) dot(x - 1, ag - 1, LAVA[2], 3, 1);
+      continue;
+    }
+    const big = i % 3 === 0;
+    dot(x, y, LAVA[3], big ? 3 : 2, big ? 3 : 2);
+    dot(x, y, LAVA[5]);
+    // Tail: where it was a frame ago.
+    const pt = Math.max(0, t - 0.05);
+    dot(ax + Math.round(vx * pt), ag - 1 - Math.round(vy * pt - 150 * pt * pt), LAVA[2]);
+  }
+  // Dark smoke puffs rise off the cracks.
+  for (let i = 0; i < 5; i++) {
+    const st = t - hash(i, 5, 46) * 0.3;
+    if (st < 0 || st > 0.7) continue;
+    const x = ax - 14 + Math.round(hash(i, 6, 47) * 28);
+    disc(dot, x, ag - 4 - Math.round(st * 40), 1 + Math.round(st * 4), (d, px, py) => (hash(px, py, frame) > 0.35 + st * 0.6 ? SMOKE[d < 0.5 ? 1 : 0] : null));
+  }
+}
+
+/** A pool of molten rock: bright lava with dark crust plates drifting on it, and bubbles that pop into sparks. */
+function lavaPool(dot: Dot, cx: number, hw: number, ag: number, t: number): void {
+  const frame = Math.floor(t * FPS);
+  for (let dy = -2; dy <= 4; dy++) {
+    const k = (dy - 1) / 3.6;
+    const w = Math.round((hw + 3) * Math.sqrt(Math.max(0, 1 - k * k)));
+    for (let c = -w; c <= w; c++) {
+      if (Math.abs(c) > w - 2 && hash(c, dy, frame >> 3) > 0.5) continue;
+      const rim = Math.abs(c) > w - 3 || dy === -2;
+      // Crust plates drift slowly sideways over the melt.
+      const crust = hash((c + Math.floor(t * 3)) >> 2, dy >> 1, 48) > 0.72;
+      const glow = Math.sin(c * 0.5 + dy + t * 5) > 0.6;
+      dot(cx + c, ag + dy, rim ? LAVA[1] : crust ? (dy < 1 ? LAVA[1] : LAVA[0]) : glow ? LAVA[4] : dy >= 3 ? LAVA[2] : LAVA[3]);
+    }
+  }
+  // Bubbles swell and burst into sparks.
+  for (let i = 0; i < 5; i++) {
+    const p = (t * 0.9 + hash(i, 8, 49)) % 1;
+    const bx = cx + Math.round((hash(i, 9, Math.floor(t * 0.9 + hash(i, 8, 49))) - 0.5) * hw * 1.4);
+    if (p < 0.6) dot(bx, ag - 1, LAVA[4]);
+    else if (p < 0.85) {
+      dot(bx - 1, ag - 3, LAVA[3], 3, 2);
+      dot(bx, ag - 3, LAVA[5]);
+    } else {
+      const f = (p - 0.85) / 0.15;
+      dot(bx - 2 - Math.round(f * 2), ag - 4 - Math.round(f * 4), LAVA[4]);
+      dot(bx + 2 + Math.round(f * 2), ag - 5 - Math.round(f * 5), LAVA[5]);
+      dot(bx, ag - 6 - Math.round(f * 6), LAVA[4]);
     }
   }
 }
