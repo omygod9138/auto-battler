@@ -163,6 +163,11 @@ export class Battle {
     return this.burn.length > 0;
   }
 
+  /** Whether the mob is held in place by a Mage's earth (Stone Spike or an earth reaction). */
+  get stoneRooted(): boolean {
+    return this.mob.root > 0 && this.lv("stoneSpike") > 0;
+  }
+
   /** The Ranger band the mob is in now. */
   get band(): Band {
     return bandAt(this.distance);

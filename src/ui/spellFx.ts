@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian" | "electrocute" | "fireball" | "gust" | "tidalWave";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian" | "electrocute" | "fireball" | "gust" | "tidalWave" | "stoneSpike";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -14,7 +14,7 @@ export interface SpellFx {
 /** Effects by reaction name. */
 export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam", Eruption: "eruption", Obsidian: "obsidian", Electrocute: "electrocute" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4, electrocute: 1.7, fireball: 0.8, gust: 0.75, tidalWave: 1.15 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4, electrocute: 1.7, fireball: 0.8, gust: 0.75, tidalWave: 1.15, stoneSpike: 1.0 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -41,6 +41,7 @@ const LAVA = ["#2a0e08", "#5a1a0c", "#c2380f", "#ff7a1a", "#ffc23a", "#fff1a0"];
 const WATER = ["#e6f6ff", "#8fd0ff", "#4a90d0"];
 const OBSIDIAN = ["#0c0a14", "#1e1a2e", "#3a3354", "#6a5d94", "#c4b4ff", "rgba(30,26,46,0.7)"];
 const WAVE = ["#ffffff", "#c4ecff", "#6cbcf2", "#3a86d0", "#22579e", "#163a72"];
+const STONE = ["#d8ccb4", "#a8977a", "#7c6b56", "#56493b", "#2e2620"];
 const SAND = ["#f4e2a8", "#d9b46a", "#b08848", "#7a5a32"];
 
 /** Fills whole art pixels on ctx. */
@@ -73,6 +74,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "fireball") fireballBlast(dot, ax, ag, ah, age);
     if (f.kind === "gust") gustHit(dot, ax, ag, ah, age);
     if (f.kind === "tidalWave") tidalHit(dot, ax, ag, ah, age);
+    if (f.kind === "stoneSpike") stoneHit(dot, ax, ag, ah, age);
   }
 }
 
@@ -959,11 +961,16 @@ function electrocute(dot: Dot, ax: number, ag: number, ah: number, age: number, 
 
 /** A projectile in flight, centred on screen (x, y) and heading dir (1 = right). Returns false if it has no pixel art yet. */
 export function drawProjectile(ctx: CanvasRenderingContext2D, fx: string, x: number, y: number, dir: number, t: number): boolean {
-  if (fx !== "fireball" && fx !== "wind" && fx !== "water") return false;
+  if (fx !== "fireball" && fx !== "wind" && fx !== "water" && fx !== "stone") return false;
   const dot = dotter(ctx);
   const cx = Math.round(x / P);
   const cy = Math.round(y / P);
   const frame = Math.floor(t * FPS * 2);
+  // A ridge of rock spikes runs along the floor: y is the ground under it.
+  if (fx === "stone") {
+    groundRun(dot, cx, cy, dir, frame);
+    return true;
+  }
   // A wave rolls along the floor: y is the ground under it.
   if (fx === "water") {
     wave(dot, cx, cy, 13, dir, frame);
@@ -1203,4 +1210,98 @@ function tidalHit(dot: Dot, ax: number, ag: number, ah: number, age: number): vo
       dot(x, ag - 3, WAVE[0], 2, 1);
     }
   }
+}
+
+/** A jagged rock spike from the floor at gy: w art pixels wide at the base, h tall, lit from the left. */
+function spike(dot: Dot, x: number, gy: number, w: number, h: number, lean = 0): void {
+  if (h < 1) return;
+  for (let y = 0; y < h; y++) {
+    const k = y / h;
+    // Chipped edges: the width steps in unevenly as it rises.
+    const half = Math.max(0, Math.round(w * (1 - k) ** 1.2 * 0.5 - (hash(x, y >> 1, 116) < 0.3 ? 1 : 0)));
+    const sx = x + Math.round(lean * k * h * 0.3);
+    // A facet ridge runs up just right of centre: lit face left, shadow right.
+    const ridge = Math.round(half * 0.2);
+    for (let c = -half; c <= half; c++) {
+      const edge = c === -half || c === half;
+      const shade = edge ? 4 : c === -half + 1 ? 1 : c < ridge ? 2 : c === ridge ? 1 : 3;
+      dot(sx + c, gy - 1 - y, STONE[shade]);
+    }
+  }
+  dot(x + Math.round(lean * h * 0.3), gy - h, STONE[0]);
+}
+
+/** Stone Spike on its way: rock spikes punch up in a line along the floor and sink again behind. */
+function groundRun(dot: Dot, cx: number, gy: number, dir: number, frame: number): void {
+  for (let k = 0; k < 6; k++) {
+    const h = Math.max(0, 7 - k * 1.4 - (frame + k) % 2);
+    spike(dot, cx - dir * k * 4, gy, 3 + (k === 0 ? 2 : 0), Math.round(h));
+  }
+  // Grit flicks up off the front.
+  for (let i = 0; i < 4; i++) {
+    if (hash(i, frame, 108) < 0.4) continue;
+    dot(cx + dir * Math.round(hash(i, frame, 109) * 4), gy - 2 - Math.round(hash(i, frame, 110) * 6), STONE[i % 2 ? 2 : 3]);
+  }
+}
+
+/** Stone Spike lands: the floor cracks, a cluster of spikes bursts up through the mob, holds, then crumbles away. */
+function stoneHit(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const dur = SPELL_FX_DUR.stoneSpike;
+  // Crack: a dark split runs out along the floor.
+  if (age < 0.7) {
+    const reach = Math.round(Math.min(1, age / 0.1) * 12);
+    for (let c = -reach; c <= reach; c++) if (hash(c, 0, 111) > 0.25) dot(ax + c, ag - (Math.abs(c) % 5 === 2 ? 1 : 0), STONE[4]);
+  }
+  // Spikes: thrust up fast, hold, then crumble from the top down.
+  const rise = easeOut(Math.min(1, Math.max(0, age - 0.04) / 0.12));
+  const crumble = Math.max(0, (age - 0.6) / (dur - 0.6));
+  const cluster: [number, number, number, number][] = [
+    [-14, 7, 0.3, -1.5],
+    [12, 7, 0.35, 1.5],
+    [-8, 10, 0.55, -1],
+    [6, 10, 0.6, 1],
+    [-1, 14, 0.9, 0],
+  ];
+  for (const [dx, w, tall, lean] of cluster) {
+    const h = Math.round(ah * tall * rise * (1 - crumble));
+    spike(dot, ax + dx, ag, w, h, lean);
+  }
+  // Rubble flies off as they burst up, then the crumbling spikes shed chunks.
+  for (let i = 0; i < 14; i++) {
+    const burst = i < 8;
+    const t = burst ? age - 0.04 : age - 0.6 - hash(i, 0, 112) * 0.1;
+    if (t < 0) continue;
+    const a = -Math.PI * (0.2 + hash(i, 1, 112) * 0.6);
+    const v = burst ? 50 + hash(i, 2, 112) * 40 : 10 + hash(i, 2, 112) * 15;
+    const x = ax + Math.round((hash(i, 3, 112) - 0.5) * 16) + Math.round(Math.cos(a) * v * t);
+    const y0 = burst ? ag - 2 : ag - Math.round(ah * 0.6 * hash(i, 4, 112));
+    const y = y0 + Math.round(Math.sin(a) * v * t + 140 * t * t);
+    if (y >= ag) continue;
+    dot(x, y, STONE[1 + (i % 3)], i % 3 ? 1 : 2, i % 3 ? 1 : 2);
+  }
+  // Dust puffs out low as they break.
+  if (crumble > 0) for (let i = 0; i < 10; i++) {
+    if (hash(i, frame, 113) < crumble * 0.8) continue;
+    dot(ax + Math.round((hash(i, 0, 113) - 0.5) * 30 * (0.5 + crumble)), ag - 1 - Math.round(hash(i, 1, 113) * 4 * crumble), SAND[1]);
+  }
+}
+
+/** Rock crusted round the mob's feet while it is rooted. */
+export function drawRootFx(ctx: CanvasRenderingContext2D, x: number, ground: number, t: number): void {
+  const dot = dotter(ctx);
+  const ax = Math.round(x / P);
+  const ag = Math.round(ground / P);
+  const frame = Math.floor(t * FPS);
+  // A low mound of stones.
+  for (let c = -8; c <= 8; c++) {
+    const tall = Math.round(3 * (1 - (c / 9) ** 2) + hash(c, 0, 114) * 1.5);
+    for (let y = 0; y < tall; y++) dot(ax + c, ag - 1 - y, STONE[y === tall - 1 ? 1 : (c + y) % 3 === 0 ? 3 : 2]);
+  }
+  // Little shards jut up round the legs.
+  spike(dot, ax - 5, ag - 2, 3, 4, -1);
+  spike(dot, ax + 4, ag - 2, 3, 5, 1);
+  spike(dot, ax - 1, ag - 2, 3, 3);
+  // Grit trickles off now and then.
+  if (hash(frame, 0, 115) > 0.6) dot(ax + Math.round((hash(frame, 1, 115) - 0.5) * 14), ag - 1, STONE[3]);
 }
