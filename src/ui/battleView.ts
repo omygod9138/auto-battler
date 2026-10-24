@@ -1,5 +1,5 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
-import { AIRBORNE_LABEL, BAND_EDGE, GROUND_SLAM_LABEL, UPPERCUT_LABEL, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
+import { AIRBORNE_LABEL, BAND_EDGE, GROUND_SLAM_LABEL, THRUST_LABEL, UPPERCUT_LABEL, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
 import { drawBurnFx, drawDerivedFx, drawProjectile, drawRootFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
 import { drawMeleeFx, drawStunStars, meleeFxDur, preloadMeleeFx, type MeleeFx } from "./meleeFx";
@@ -214,7 +214,15 @@ export function playBattle(
           const wound = scene.anim[attacker].skill?.id === e.skill && scene.anim[attacker].skill?.phase === "windup";
           scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: wound ? "strike" : "full", simAt: e.t, simEnd: e.t };
         }
-        if (e.fx === "slash" && (!e.skill || flurrySlash) && target === "mob") {
+        if (e.label === THRUST_LABEL && target === "mob") {
+          // The downward thrust ends the combo: a star of impact, the floor cracks and a ring rolls out.
+          scene.anim[attacker].lunge = scene.now;
+          scene.melee.push({ kind: "kickImpact", born: scene.now, big: true, dx: -10 });
+          scene.melee.push({ kind: "groundCrack", born: scene.now + 0.03, big: true, floor: true });
+          scene.melee.push({ kind: "shockwave", born: scene.now + 0.03, floor: true });
+          scene.flashes.push({ born: scene.real, dur: 0.16, color: "255,255,255" });
+          scene.shake = Math.max(scene.shake, 14);
+        } else if (e.fx === "slash" && (!e.skill || flurrySlash) && target === "mob") {
           // A plain sword swing: a steel crescent across the mob, then a hit flash where the blade meets it.
           // Flurry slashes cut from different angles: up, across, then down.
           scene.anim[attacker].lunge = scene.now;
@@ -574,7 +582,8 @@ function draw(
       t,
       lift: lift(battle, side),
       // Thrown head over heels away from the hit: back on the way up, levelling out to land.
-      tilt: side === "mob" && f.z > 0 ? -facing * Math.min(1, f.z / 1.5) * (f.vz > 0 ? 0.9 : 0.5) : 0,
+      // Plunging into the downward thrust, the Warrior tips over toward the mob.
+      tilt: side === "hero" && battle.slamDown?.phase === "thrust" ? facing * 0.5 : side === "mob" && f.z > 0 ? -facing * Math.min(1, f.z / 1.5) * (f.vz > 0 ? 0.9 : 0.5) : 0,
     });
     if (f.vuln > 0) {
       // Wall Slam debuff marker beside the health bar.

@@ -1,6 +1,6 @@
 import { Rng } from "./rng";
 import {
-  AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, FLURRY, GROUND_SLAM_LABEL, BAND_HOLD, BAND_NAME, BAND_OF, COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, OFF_BALANCE, OFF_BAND, SKILL_NUM as N, SPELL_HOLD, UNARMED, UPPERCUT_LABEL, UPPERCUT_UP, bandAt, findReaction,
+  AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, FLURRY, GROUND_SLAM_LABEL, THRUST_LABEL, BAND_HOLD, BAND_NAME, BAND_OF, COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, OFF_BALANCE, OFF_BAND, SKILL_NUM as N, SPELL_HOLD, UNARMED, UPPERCUT_LABEL, UPPERCUT_UP, bandAt, findReaction,
   type Band, type Combo, type Derived, type Element, type Reaction, type SkillId, type SkillLevels,
 } from "./skills";
 import type { Stats } from "./stats";
@@ -77,6 +77,13 @@ const LAUNCH_SPEED = 9;
 const SKY = 3.5;
 /** In an Uppercut Flurry the Warrior hangs this far below the mob. */
 const HERO_BELOW = 0.4;
+/** A Ground Slam hurls the mob down this fast and bounces the Warrior up at HOP_SPEED, to hang
+ * SLAM_HANG seconds before a downward thrust at THRUST_SPEED for THRUST_MULT × hero damage. */
+const SLAM_SPEED = 12;
+const HOP_SPEED = 4;
+const SLAM_HANG = 0.25;
+const THRUST_SPEED = 16;
+const THRUST_MULT = 1;
 
 interface Dot {
   dps: number;
@@ -96,6 +103,8 @@ export class Battle {
   private charged = false;
   /** The hero is mid Charge dash. */
   dashing = false;
+  /** After a Ground Slam: the Warrior bounces up, hangs, then thrusts down onto the mob. */
+  slamDown: { phase: "hop" | "hang" | "thrust"; at: number; slammed: boolean } | null = null;
   /** Slashes left of an Uppercut Flurry, and when the next one lands. */
   private flurry: { left: number; at: number; /** Heavy Strike takes the last hit; its dodge is already rolled. */ slam?: boolean } | null = null;
   /** A wound-up skill waiting to land. */
@@ -265,6 +274,7 @@ export class Battle {
   private act(me: Fighter, foe: Fighter): void {
     // Mid flurry the Warrior is up in the air with the mob, and still slashing.
     if (me.side === "hero" && this.flurry && me.stun === 0) return this.slash();
+    if (me.side === "hero" && this.slamDown) return this.slamStep();
     if (me.stun > 0 || me.push !== 0 || me.z > 0) return;
     if (me.side === "hero" && this.dashing) return this.dash();
     if (me.side === "hero" && this.pending) {
@@ -600,11 +610,11 @@ export class Battle {
       this.flurry = null;
       this.recover();
       if (!landed) return;
-      m.z = 0;
-      m.vz = 0;
-      // And dives down after it.
-      h.vz = -LAUNCH_SPEED;
-      this.emit({ t: this.time, type: "status", target: "mob", label: GROUND_SLAM_LABEL });
+      // The blow hurls the mob down and bounces the Warrior up, to hang there and thrust down after it.
+      m.vz = -SLAM_SPEED;
+      h.vz = HOP_SPEED;
+      this.slamDown = { phase: "hop", at: 0, slammed: false };
+      this.slamStep();
       return;
     }
     this.physical(this.hero.s.dmg * FLURRY.mult, "slash", "Slash!", "shieldBash");
@@ -617,6 +627,32 @@ export class Battle {
     }
     if (--f.left === 0) {
       this.flurry = null;
+      this.recover();
+    }
+  }
+
+  /** After a Ground Slam's Heavy Strike: the slam lands when the mob hits the floor; the Warrior
+   * rises off the blow, hangs at the top, then thrusts down onto the mob to end the combo. */
+  private slamStep(): void {
+    const sl = this.slamDown!;
+    const m = this.mob;
+    const h = this.hero;
+    if (!sl.slammed && m.z === 0) {
+      sl.slammed = true;
+      this.emit({ t: this.time, type: "status", target: "mob", label: GROUND_SLAM_LABEL });
+    }
+    if (sl.phase === "hop" && h.vz <= 0) sl.phase = "hang";
+    if (sl.phase === "hang") {
+      h.vz = 0;
+      if (!sl.at) sl.at = this.time + SLAM_HANG;
+      if (this.time >= sl.at - 1e-9 && sl.slammed) {
+        sl.phase = "thrust";
+        h.vz = -THRUST_SPEED;
+      }
+    }
+    if (sl.phase === "thrust" && h.z === 0) {
+      this.physical(h.s.dmg * THRUST_MULT, "slash", THRUST_LABEL);
+      this.slamDown = null;
       this.recover();
     }
   }
@@ -828,7 +864,7 @@ export class Battle {
   private dealToMob(dmg: number, crit: boolean, fx: FxKind, label?: string, skill?: SkillId): void {
     dmg *= this.slam();
     this.mob.hp -= dmg;
-    this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label, skill, ...(this.flurry ? { flurry: FLURRY.hits - this.flurry.left + 1 } : {}) });
+    this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label, skill, ...(this.flurry ? { flurry: FLURRY.hits - this.flurry.left + 1 } : this.slamDown ? { flurry: FLURRY.hits + 1 } : {}) });
     const heal = dmg * (this.hero.s.lifesteal + (this.lv("bloodlust") ? N.bloodlust(this.lv("bloodlust")) : 0));
     this.healHero(heal);
     this.checkDeath();

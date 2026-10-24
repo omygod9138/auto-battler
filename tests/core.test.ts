@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ARENA, Battle, SKILL_RECOVERY, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
-import { AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, COMBOS, FLURRY, GROUND_SLAM_LABEL, OFF_BALANCE, UPPERCUT_LABEL, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
+import { AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, COMBOS, FLURRY, GROUND_SLAM_LABEL, OFF_BALANCE, THRUST_LABEL, UPPERCUT_LABEL, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
 import { CLASSES, stats } from "../src/core/stats";
 
 const dummy = stats({ maxHp: 1000, dmg: 0, interval: 99, range: 1.2, speed: 0 });
@@ -580,5 +580,14 @@ describe("hidden airborne combo", () => {
     // It's still the Bash → Heavy combo, and the view pauses on it.
     expect(paused).toBe("Combo! +33%");
     expect(b.mob.z).toBe(0);
+    // Thrown down, it slams a beat after the Heavy Strike, while the Warrior bounces up off the blow.
+    const heavy = flurry.at(-1)!;
+    const slam = b.events.find((e) => e.type === "status" && e.label === GROUND_SLAM_LABEL)!;
+    expect(slam.t).toBeGreaterThan(heavy.t);
+    expect(b.hero.z).toBeGreaterThan(0);
+    // Then a downward thrust ends the combo, once the Warrior is back on the ground.
+    stepUntil(b, () => b.events.some((e) => e.type === "damage" && e.label === THRUST_LABEL));
+    expect(b.hero.z).toBe(0);
+    expect(b.slamDown).toBeNull();
   });
 });

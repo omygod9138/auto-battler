@@ -60,6 +60,8 @@ export const UPPERCUT_UP = 0.3;
 export const FLURRY = { hits: 3, mult: 0.6, gap: 0.15 };
 /** Hidden: with Heavy Strike ready, it replaces the flurry's last slash and slams the mob into the ground. */
 export const GROUND_SLAM_LABEL = "Ground Slam!";
+/** Then the Warrior, bounced up off the blow, ends the combo with a downward thrust. */
+export const THRUST_LABEL = "Downward Thrust!";
 
 /** Ranger range bands, by distance from hero to mob. Each Ranger skill is strongest in one band. */
 export type Band = "close" | "mid" | "far";
