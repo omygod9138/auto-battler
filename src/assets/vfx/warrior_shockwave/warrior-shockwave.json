@@ -1,0 +1,235 @@
+{
+ "frames": [
+  {
+   "filename": "warrior-shockwave 0.png",
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "sourceSize": {
+    "w": 112,
+    "h": 64
+   },
+   "pivot": {
+    "x": 0.5,
+    "y": 0.625
+   },
+   "duration": 71
+  },
+  {
+   "filename": "warrior-shockwave 1.png",
+   "frame": {
+    "x": 112,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "sourceSize": {
+    "w": 112,
+    "h": 64
+   },
+   "pivot": {
+    "x": 0.5,
+    "y": 0.625
+   },
+   "duration": 71
+  },
+  {
+   "filename": "warrior-shockwave 2.png",
+   "frame": {
+    "x": 224,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "sourceSize": {
+    "w": 112,
+    "h": 64
+   },
+   "pivot": {
+    "x": 0.5,
+    "y": 0.625
+   },
+   "duration": 71
+  },
+  {
+   "filename": "warrior-shockwave 3.png",
+   "frame": {
+    "x": 0,
+    "y": 64,
+    "w": 112,
+    "h": 64
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "sourceSize": {
+    "w": 112,
+    "h": 64
+   },
+   "pivot": {
+    "x": 0.5,
+    "y": 0.625
+   },
+   "duration": 71
+  },
+  {
+   "filename": "warrior-shockwave 4.png",
+   "frame": {
+    "x": 112,
+    "y": 64,
+    "w": 112,
+    "h": 64
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "sourceSize": {
+    "w": 112,
+    "h": 64
+   },
+   "pivot": {
+    "x": 0.5,
+    "y": 0.625
+   },
+   "duration": 71
+  },
+  {
+   "filename": "warrior-shockwave 5.png",
+   "frame": {
+    "x": 224,
+    "y": 64,
+    "w": 112,
+    "h": 64
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "sourceSize": {
+    "w": 112,
+    "h": 64
+   },
+   "pivot": {
+    "x": 0.5,
+    "y": 0.625
+   },
+   "duration": 71
+  },
+  {
+   "filename": "warrior-shockwave 6.png",
+   "frame": {
+    "x": 0,
+    "y": 128,
+    "w": 112,
+    "h": 64
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "sourceSize": {
+    "w": 112,
+    "h": 64
+   },
+   "pivot": {
+    "x": 0.5,
+    "y": 0.625
+   },
+   "duration": 71
+  },
+  {
+   "filename": "warrior-shockwave 7.png",
+   "frame": {
+    "x": 112,
+    "y": 128,
+    "w": 112,
+    "h": 64
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 112,
+    "h": 64
+   },
+   "sourceSize": {
+    "w": 112,
+    "h": 64
+   },
+   "pivot": {
+    "x": 0.5,
+    "y": 0.625
+   },
+   "duration": 71
+  }
+ ],
+ "meta": {
+  "app": "PixelLab VFX Creator",
+  "image": "warrior-shockwave.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 336,
+   "h": 192
+  },
+  "scale": "1",
+  "anchor": {
+   "kind": "origin",
+   "x": 56,
+   "y": 40
+  },
+  "frameTags": [
+   {
+    "name": "warrior-shockwave",
+    "from": 0,
+    "to": 7,
+    "direction": "forward"
+   }
+  ]
+ }
+}
