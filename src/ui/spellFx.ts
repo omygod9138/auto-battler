@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -32,6 +32,8 @@ const SMOKE = ["#3d3236", "#5c4a4a"];
 const CLOUD = ["#3e4058", "#646884", "#9a9fbc", "#d2d6ea"];
 const RAIN = "#8fb8e0";
 const BOLT = ["#ffffff", "#fff59a", "#9fd8ff"];
+const MUD = ["#2a1c12", "#4a3322", "#6e4c2c", "#94703f", "#d8c09a", "#7f8c8a"];
+const WATER = ["#e6f6ff", "#8fd0ff", "#4a90d0"];
 const SAND = ["#f4e2a8", "#d9b46a", "#b08848", "#7a5a32"];
 
 /** Fills whole art pixels on ctx. */
@@ -52,7 +54,17 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "wildfire") wildfire(dot, ax, ag, age);
     if (f.kind === "storm") storm(dot, ax, ag, ah, age, ctx);
     if (f.kind === "sandstorm") sandstorm(dot, ax, ag, ah, age);
+    if (f.kind === "mud") mudSplash(dot, ax, ag, ah, age);
   }
+}
+
+/** A ground zone between screen x0 and x1. Returns false if it has no pixel art yet. */
+export function drawZoneFx(ctx: CanvasRenderingContext2D, kind: string, x0: number, x1: number, ground: number, t: number, fade: number): boolean {
+  if (kind !== "mud") return false;
+  ctx.globalAlpha = fade;
+  mudPuddle(dotter(ctx), Math.round((x0 + x1) / 2 / P), Math.round((x1 - x0) / 2 / P), Math.round(ground / P), t);
+  ctx.globalAlpha = 1;
+  return true;
 }
 
 /** A lingering state left on the mob (not a ground zone), drawn until it runs out. Returns false if it has no pixel art yet. */
@@ -282,5 +294,71 @@ function sandSwirl(dot: Dot, ax: number, ag: number, ah: number, t: number): voi
     const yy = y + Math.round(Math.sin(a) * 2);
     // Grains in front of the mob are brighter than those behind it.
     dot(x, yy, Math.sin(a) > 0 ? (i % 2 ? SAND[0] : SAND[1]) : SAND[2], i % 4 ? 1 : 2, 1);
+  }
+}
+
+/** Water + Earth: water crashes down and the ground under the mob bursts up as mud. */
+function mudSplash(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  // Water pours down onto the mob first.
+  if (age < 0.22) {
+    for (let i = 0; i < 12; i++) {
+      const y = ag - ah - 14 + Math.round((age / 0.22) * (ah + 12)) - Math.round(hash(i, 1, 1) * 10);
+      dot(ax - 10 + Math.round(hash(i, 2, 2) * 20), Math.min(y, ag - 1), WATER[i % 3], 1, 2);
+    }
+  }
+  // Then globs of mud fly up and out, and splat back down.
+  const t = age - 0.15;
+  if (t < 0) return;
+  for (let i = 0; i < 22; i++) {
+    const side = i % 2 ? 1 : -1;
+    const vx = side * (8 + hash(i, 3, 3) * 34);
+    const vy = 50 + hash(i, 4, 4) * 55;
+    const x = ax + side * 2 + Math.round(vx * t);
+    const y = ag - 1 - Math.round(vy * t - 130 * t * t);
+    if (y >= ag) {
+      // Landed: a flat splat that fades.
+      if (t < 0.75) dot(x - 1, ag - 1, MUD[2], 3, 1);
+      continue;
+    }
+    const big = i % 3 === 0;
+    dot(x, y, MUD[2], big ? 3 : 2, big ? 3 : 2);
+    dot(x + (big ? 2 : 1), y + (big ? 2 : 1), MUD[1]);
+    dot(x, y, MUD[4]);
+  }
+  // A brown ring of earth heaves up around the feet.
+  if (t < 0.35) {
+    const r = 3 + Math.round(t * 50);
+    for (let c = -r; c <= r; c++) if (Math.abs(c) > r - 3) dot(ax + c, ag - 1 - Math.round(hash(c, 5, 5) * 2), MUD[2]);
+  }
+}
+
+/** A glossy mud puddle with bubbles that swell and pop. */
+function mudPuddle(dot: Dot, cx: number, hw: number, ag: number, t: number): void {
+  const frame = Math.floor(t * FPS);
+  for (let dy = -2; dy <= 4; dy++) {
+    const k = (dy - 1) / 3.6;
+    const w = Math.round((hw + 3) * Math.sqrt(Math.max(0, 1 - k * k)));
+    for (let c = -w; c <= w; c++) {
+      // Ragged, slowly wobbling rim.
+      if (Math.abs(c) > w - 2 && hash(c, dy, frame >> 3) > 0.5) continue;
+      const rim = Math.abs(c) > w - 3 || dy === -2;
+      // A wet sheen of sky reflected in the middle rows.
+      const sheen = (dy === -1 || dy === 0) && Math.abs(c) < w * 0.7 && hash(c, 7, (frame >> 2) + (c >> 2)) > 0.72;
+      dot(cx + c, ag + dy, sheen ? (dy === -1 ? MUD[4] : MUD[5]) : rim ? MUD[1] : dy >= 3 ? MUD[0] : MUD[2]);
+    }
+  }
+  // Bubbles rise, swell and pop on their own clocks.
+  for (let i = 0; i < 5; i++) {
+    const p = (t * 0.7 + hash(i, 8, 8)) % 1;
+    const bx = cx + Math.round((hash(i, 9, Math.floor(t * 0.7 + hash(i, 8, 8))) - 0.5) * hw * 1.4);
+    if (p < 0.6) dot(bx, ag - 1, MUD[3]);
+    else if (p < 0.85) {
+      dot(bx - 1, ag - 3, MUD[3], 3, 2);
+      dot(bx - 1, ag - 3, MUD[4]);
+    } else {
+      dot(bx - 3, ag - 4, MUD[3]);
+      dot(bx + 3, ag - 5, MUD[3]);
+      dot(bx, ag - 6, MUD[4]);
+    }
   }
 }

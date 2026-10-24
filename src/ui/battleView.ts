@@ -1,7 +1,7 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
-import { drawDerivedFx, drawSpellFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
+import { drawDerivedFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
 import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
@@ -591,16 +591,18 @@ function drawElements(ctx: CanvasRenderingContext2D, battle: Battle, t: number, 
     if (def.zone) {
       const x0 = px(d.x - def.zone);
       const x1 = px(d.x + def.zone);
-      const color = d.kind === "lava" ? "255,90,30" : "120,85,50";
-      ctx.fillStyle = `rgba(${color},${0.55 * fade})`;
-      ctx.beginPath();
-      ctx.ellipse((x0 + x1) / 2, GROUND + 6, (x1 - x0) / 2, 9, 0, 0, Math.PI * 2);
-      ctx.fill();
-      if (d.kind === "lava") {
-        ctx.fillStyle = `rgba(255,200,80,${0.5 * fade * (0.6 + 0.4 * Math.sin(t * 6))})`;
+      if (!drawZoneFx(ctx, d.kind, x0, x1, GROUND, t, fade)) {
+        const color = d.kind === "lava" ? "255,90,30" : "120,85,50";
+        ctx.fillStyle = `rgba(${color},${0.55 * fade})`;
         ctx.beginPath();
-        ctx.ellipse((x0 + x1) / 2, GROUND + 6, (x1 - x0) / 3, 4, 0, 0, Math.PI * 2);
+        ctx.ellipse((x0 + x1) / 2, GROUND + 6, (x1 - x0) / 2, 9, 0, 0, Math.PI * 2);
         ctx.fill();
+        if (d.kind === "lava") {
+          ctx.fillStyle = `rgba(255,200,80,${0.5 * fade * (0.6 + 0.4 * Math.sin(t * 6))})`;
+          ctx.beginPath();
+          ctx.ellipse((x0 + x1) / 2, GROUND + 6, (x1 - x0) / 3, 4, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     } else if (!drawDerivedFx(ctx, d.kind, fx(battle, "mob"), GROUND, mobH, t, fade)) {
       ctx.globalAlpha = fade;

@@ -23,6 +23,7 @@ const PRESETS: { name: string; cls: ClassId; levels: SkillLevels }[] = [
   { name: "Mage: Fire + Earth (Lava)", cls: "mage", levels: { fireball: 1, stoneSpike: 1 } },
   { name: "Mage: Fire + Air (Wildfire)", cls: "mage", levels: { fireball: 1, gust: 1 } },
   { name: "Mage: Earth + Air (Sandstorm)", cls: "mage", levels: { stoneSpike: 1, gust: 1 } },
+  { name: "Mage: Water + Earth (Mud)", cls: "mage", levels: { tidalWave: 1, stoneSpike: 1 } },
   { name: "Mage: Water + Air (Storm)", cls: "mage", levels: { tidalWave: 1, gust: 1 } },
   { name: "Ranger: Far → Mid → Close loop", cls: "ranger", levels: { longshot: 1, pinningArrow: 1, scatterShot: 1, snare: 1 } },
   { name: "Ranger: Longshot + Scatter Shot", cls: "ranger", levels: { longshot: 1, scatterShot: 1 } },
