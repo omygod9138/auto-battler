@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -33,6 +33,7 @@ const CLOUD = ["#3e4058", "#646884", "#9a9fbc", "#d2d6ea"];
 const RAIN = "#8fb8e0";
 const BOLT = ["#ffffff", "#fff59a", "#9fd8ff"];
 const MUD = ["#2a1c12", "#4a3322", "#6e4c2c", "#94703f", "#d8c09a", "#7f8c8a"];
+const PLASMA = ["#ffffff", "#ffd6ff", "#ff7ae0", "#c23cff", "#5a1a9a"];
 const WATER = ["#e6f6ff", "#8fd0ff", "#4a90d0"];
 const SAND = ["#f4e2a8", "#d9b46a", "#b08848", "#7a5a32"];
 
@@ -55,6 +56,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "storm") storm(dot, ax, ag, ah, age, ctx);
     if (f.kind === "sandstorm") sandstorm(dot, ax, ag, ah, age);
     if (f.kind === "mud") mudSplash(dot, ax, ag, ah, age);
+    if (f.kind === "plasma") plasma(dot, ax, ag, ah, age);
   }
 }
 
@@ -362,3 +364,65 @@ function mudPuddle(dot: Dot, cx: number, hw: number, ag: number, t: number): voi
     }
   }
 }
+
+/** A filled pixel disc, its colour picked by distance from the centre (0..1). */
+function disc(dot: Dot, cx: number, cy: number, r: number, color: (d: number, x: number, y: number) => string | null): void {
+  for (let y = -r; y <= r; y++) {
+    for (let x = -r; x <= r; x++) {
+      const d = Math.sqrt(x * x + y * y) / (r + 0.5);
+      if (d > 1) continue;
+      const c = color(d, x, y);
+      if (c) dot(cx + x, cy + y, c);
+    }
+  }
+}
+
+/** Storm + Fire: flames feed the storm cloud into a ball of plasma that slams into the mob and bursts. */
+function plasma(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const top = ag - ah - 12;
+  const mid = ag - Math.round(ah * 0.5);
+  // Fire spirals up into the dying cloud.
+  if (age < 0.35) {
+    cloud(dot, ax, top - 6, Math.round(10 * (1 - age / 0.35)) + 2, frame);
+    for (let i = 0; i < 12; i++) {
+      const k = Math.min(1, age / 0.3 + hash(i, 1, 1) * 0.3);
+      const a = hash(i, 2, 2) * 6.28 + age * 18;
+      const r = Math.round((1 - k) * 18);
+      dot(ax + Math.round(Math.cos(a) * r), top + Math.round(Math.sin(a) * r * 0.5) + Math.round((1 - k) * 14), FIRE[i % 3]);
+    }
+  }
+  // The orb swells, crackling, then drops onto the mob.
+  if (age >= 0.12 && age < 0.5) {
+    const r = Math.min(7, Math.round((age - 0.12) * 40));
+    const drop = age < 0.4 ? 0 : (age - 0.4) / 0.1;
+    const cy = Math.round(top + (mid - top) * drop * drop);
+    disc(dot, ax, cy, r, (d) => (d < 0.4 ? PLASMA[0] : d < 0.7 ? PLASMA[1] : hash(frame, 3, 3) > 0.5 ? PLASMA[2] : PLASMA[3]));
+    for (let i = 0; i < 4; i++) {
+      const a = hash(i, frame, 4) * 6.28;
+      for (let k = r + 1; k < r + 4; k++) dot(ax + Math.round(Math.cos(a) * k) + (k % 2), cy + Math.round(Math.sin(a) * k), PLASMA[2]);
+    }
+  }
+  // Burst: a white-hot core that cools to violet inside an expanding ring, throwing sparks.
+  const t = age - 0.5;
+  if (t < 0) return;
+  const k = t / 0.6;
+  const core = Math.round(10 * (1 - k));
+  if (core > 0) disc(dot, ax, mid, core, (d, x, y) => (hash(x, y, frame) < k * 0.6 ? null : d < 0.3 * (1 - k) ? PLASMA[0] : d < 0.6 ? PLASMA[1] : PLASMA[2]));
+  const ring = 6 + Math.round(easeOut(Math.min(1, k)) * 24);
+  for (let i = 0; i < 64; i++) {
+    const a = (i / 64) * 6.28;
+    if (hash(i, frame, 6) < k * 0.6) continue;
+    const rx = ax + Math.round(Math.cos(a) * ring);
+    const ry = mid + Math.round(Math.sin(a) * ring * 0.8);
+    dot(rx, ry, i % 3 ? PLASMA[2] : PLASMA[1]);
+    dot(rx - Math.round(Math.cos(a)), ry - Math.round(Math.sin(a)), PLASMA[3]);
+  }
+  for (let i = 0; i < 14; i++) {
+    const a = hash(i, 7, 7) * 6.28;
+    const r = 4 + t * (50 + hash(i, 8, 8) * 40);
+    dot(ax + Math.round(Math.cos(a) * r), mid + Math.round(Math.sin(a) * r * 0.7 + t * t * 40), k < 0.6 ? PLASMA[1] : PLASMA[4]);
+  }
+}
+
+const easeOut = (k: number) => 1 - (1 - k) ** 3;
