@@ -1,6 +1,6 @@
 import { Rng } from "./rng";
 import {
-  BAND_EDGE, BAND_HOLD, BAND_NAME, BAND_OF, COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, OFF_BAND, SKILL_NUM as N, SPELL_HOLD, bandAt, findReaction,
+  AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, FLURRY, GROUND_SLAM_LABEL, THRUST_LABEL, BAND_HOLD, BAND_NAME, BAND_OF, COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, OFF_BALANCE, OFF_BAND, SKILL_NUM as N, SPELL_HOLD, UNARMED, UPPERCUT_LABEL, UPPERCUT_UP, bandAt, findReaction,
   type Band, type Combo, type Derived, type Element, type Reaction, type SkillId, type SkillLevels,
 } from "./skills";
 import type { Stats } from "./stats";
@@ -26,6 +26,11 @@ export interface Fighter {
   vuln: number;
   /** How much extra while vuln lasts. */
   vulnMult: number;
+  /** Height above the ground and upward speed, while airborne. */
+  z: number;
+  vz: number;
+  /** Seconds left that a knockback has it off balance, so an unarmed hit launches it. */
+  offBalance: number;
 }
 
 /** Wall Slam: a kick into the far wall makes the mob take this much more damage for WALL_SLAM_TIME. */
@@ -36,7 +41,7 @@ export type FxKind = "slash" | "arrow" | "bolt" | "fireball" | "water" | "wind" 
 
 /** What happened during a tick, for floating numbers and projectiles. */
 export type BattleEvent =
-  | { t: number; type: "damage"; target: Side; amount: number; crit: boolean; fx: FxKind; label?: string; skill?: SkillId }
+  | { t: number; type: "damage"; target: Side; amount: number; crit: boolean; fx: FxKind; label?: string; skill?: SkillId; /** Which hit of an Uppercut Flurry this is, from 1. */ flurry?: number }
   | { t: number; type: "dot"; target: Side; amount: number; kind: "poison" | "burn" | "thorns" }
   | { t: number; type: "heal"; target: Side; amount: number }
   | { t: number; type: "dodge"; target: Side }
@@ -66,6 +71,19 @@ const DASH_SPEED = 16;
 /** Knockback covers this share of what's left each tick (with a floor), so it launches fast and skids to a stop. */
 const PUSH_SHARE = 0.6;
 const PUSH_MIN_STEP = 0.1;
+/** Airborne: gravity, the launch's upward speed, and the highest an upward knock can throw. Arena units. */
+const GRAVITY = 12;
+const LAUNCH_SPEED = 9;
+const SKY = 3.5;
+/** In an Uppercut Flurry the Warrior hangs this far below the mob. */
+const HERO_BELOW = 0.4;
+/** A Ground Slam hurls the mob down this fast and bounces the Warrior up at HOP_SPEED, to hang
+ * SLAM_HANG seconds before a downward thrust at THRUST_SPEED for THRUST_MULT × the Heavy Strike's damage. */
+const SLAM_SPEED = 12;
+const HOP_SPEED = 4;
+const SLAM_HANG = 0.25;
+const THRUST_SPEED = 16;
+const THRUST_MULT = 1;
 
 interface Dot {
   dps: number;
@@ -85,6 +103,10 @@ export class Battle {
   private charged = false;
   /** The hero is mid Charge dash. */
   dashing = false;
+  /** After a Ground Slam: the Warrior bounces up, hangs, then thrusts down onto the mob. */
+  slamDown: { phase: "hop" | "hang" | "thrust"; at: number; slammed: boolean; /** The Heavy Strike's damage multiplier, for the thrust. */ mult: number } | null = null;
+  /** Slashes left of an Uppercut Flurry, and when the next one lands. */
+  private flurry: { left: number; at: number; /** Heavy Strike takes the last hit; its dodge is already rolled. */ slam?: boolean } | null = null;
   /** A wound-up skill waiting to land. */
   private pending: { skill: SkillId; at: number; onBand: boolean } | null = null;
   /** The skill behind the hero's previous attack, or null if it was a plain swing; combos need it to be the very last attack. */
@@ -128,8 +150,8 @@ export class Battle {
   ) {
     this.rng = new Rng(seed);
     this.lv = (id) => levels[id] ?? 0;
-    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1 };
-    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1 };
+    this.hero = { side: "hero", s: heroStats, hp: heroStats.maxHp, x: heroStart, atkTimer: 0, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1, z: 0, vz: 0, offBalance: 0 };
+    this.mob = { side: "mob", s: mobStats, hp: mobStats.maxHp, x: ARENA.mobStart, atkTimer: 0.4, stun: 0, root: 0, shield: 0, push: 0, vuln: 0, vulnMult: 1, z: 0, vz: 0, offBalance: 0 };
     if (this.lv("manaShield")) this.hero.shield = heroStats.maxHp * N.manaShield(this.lv("manaShield")).shield;
     this.snareX = this.lv("snare") ? heroStart + BAND_EDGE.mid : null;
     // Active skills start at half cooldown so the first cast comes early.
@@ -200,6 +222,12 @@ export class Battle {
       f.stun = Math.max(0, f.stun - TICK);
       // A root waits out a knockback slide, so "immobilized after the kick" starts once it lands.
       if (f.push === 0) f.root = Math.max(0, f.root - TICK);
+      if (f.push === 0) f.offBalance = Math.max(0, f.offBalance - TICK);
+      if (f.z > 0) {
+        f.vz -= GRAVITY * TICK;
+        f.z = Math.max(0, f.z + f.vz * TICK);
+        if (f.z === 0) f.vz = 0;
+      }
       f.vuln = Math.max(0, f.vuln - TICK);
       if (f.side === "hero") this.evade = Math.max(0, this.evade - TICK);
       if (f.vuln === 0) f.vulnMult = 1;
@@ -244,7 +272,10 @@ export class Battle {
   }
 
   private act(me: Fighter, foe: Fighter): void {
-    if (me.stun > 0 || me.push !== 0) return;
+    // Mid flurry the Warrior is up in the air with the mob, and still slashing.
+    if (me.side === "hero" && this.flurry && me.stun === 0) return this.slash();
+    if (me.side === "hero" && this.slamDown) return this.slamStep();
+    if (me.stun > 0 || me.push !== 0 || me.z > 0) return;
     if (me.side === "hero" && this.dashing) return this.dash();
     if (me.side === "hero" && this.pending) {
       if (this.time >= this.pending.at - 1e-9) {
@@ -342,6 +373,12 @@ export class Battle {
     // Charge comes back every cycle, so the bash is saved for right after each Charge.
     const awaitCharge = this.lv("charge") > 0 && !this.charged;
     const saveBash = this.lv("charge") > 0 && this.lv("spartanKick") > 0 && this.lastSkill !== "charge";
+    // Hidden: a Shield Bash ready for an airborne mob goes after it at dash speed, to uppercut it in the air.
+    if (ready("shieldBash") && !inRange && this.airborne && !awaitCharge && !saveBash) {
+      h.x += Math.min(DASH_SPEED * TICK, dist - h.s.range);
+      this.walkedAt.hero = this.time;
+      return true;
+    }
     if (ready("shieldBash") && inRange && !awaitCharge && !saveBash) {
       this.cds.set("shieldBash", this.cooldown("shieldBash"));
       this.windUp("shieldBash");
@@ -427,6 +464,8 @@ export class Battle {
     const c = this.combo("charge");
     if (this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Charge!", "charge")) {
       this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1) + (c?.stunAdd ?? 0));
+      this.launch();
+      this.knock(n.push);
     }
   }
 
@@ -451,9 +490,32 @@ export class Battle {
   comboNext(): string | null {
     const h = this.hero;
     if (this.outcome || h.stun > 0 || h.push !== 0) return null;
-    if (this.pending && this.time + TICK >= this.pending.at - 1e-9) return this.peekCombo(this.pending.skill)?.label ?? null;
-    if (this.dashing && this.mob.x - h.x - h.s.range <= DASH_SPEED * TICK) return this.peekCombo("charge")?.label ?? null;
+    const next = (skill: SkillId) =>
+      this.peekCombo(skill)?.label ?? (this.launches(skill) ? AIRBORNE_LABEL : skill === "shieldBash" && this.airborne && !this.nextDodge ? UPPERCUT_LABEL : null);
+    if (this.pending && this.time + TICK >= this.pending.at - 1e-9) return next(this.pending.skill);
+    if (this.slamNext() && this.time + TICK >= this.flurry!.at - 1e-9) return this.nextDodge ? null : (this.peekCombo("heavyStrike")?.label ?? GROUND_SLAM_LABEL);
+    if (this.dashing && this.mob.x - h.x - h.s.range <= DASH_SPEED * TICK) return next("charge");
     return null;
+  }
+
+  /** Whether that skill landing now (or next tick) would launch the mob: unarmed, on a knocked-back mob still on the ground. */
+  private launches(skill: SkillId): boolean {
+    const m = this.mob;
+    return UNARMED.includes(skill) && !this.nextDodge && m.z === 0 && m.offBalance > TICK + 1e-9;
+  }
+
+  /** Hidden combo: an unarmed hit on a knocked-back mob throws it into the air. Call before the hit's knockback. */
+  private launch(): void {
+    const m = this.mob;
+    if (m.z > 0 || m.offBalance <= 0) return;
+    m.offBalance = 0;
+    m.vz = LAUNCH_SPEED;
+    m.z = LAUNCH_SPEED * TICK;
+    this.emit({ t: this.time, type: "status", target: "mob", label: AIRBORNE_LABEL });
+  }
+
+  get airborne(): boolean {
+    return this.mob.z > 0;
   }
 
   private land(skill: SkillId): void {
@@ -497,25 +559,109 @@ export class Battle {
     if (skill === "shieldBash") {
       const n = N.shieldBash(this.lv("shieldBash"));
       const c = this.combo("shieldBash");
-      this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", "Bash!", "shieldBash");
+      const air = this.airborne;
+      const hit = this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", air ? "Uppercut!" : "Bash!", "shieldBash");
       this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
+      if (hit && air) {
+        // Hidden: against an airborne mob the bash swings up into an uppercut, then a flurry of slashes.
+        this.emit({ t: this.time, type: "status", target: "mob", label: UPPERCUT_LABEL });
+        this.knock(0, UPPERCUT_UP);
+        this.flurry = { left: FLURRY.hits, at: this.time + FLURRY.gap };
+      }
     }
     if (skill === "spartanKick") {
       const n = N.spartanKick(this.lv("spartanKick"));
       this.combo("spartanKick");
+      const launches = this.launches("spartanKick");
       if (this.physical(h.s.dmg * n.mult, "bash", "Kick!", "spartanKick")) {
+        this.mob.root = Math.max(this.mob.root, n.root);
+        if (launches || this.airborne) {
+          // Kicked off its feet: it flies ×10 along the kick, so the kicker stays put.
+          if (launches) this.launch();
+          this.knock(n.push);
+          return;
+        }
         // Against the far wall the kicker bounces back instead, so the gap still opens,
         // and the mob is slammed into the wall.
         const slide = Math.min(n.push, ARENA.length - this.mob.x);
         this.mob.push += slide;
-        this.mob.root = Math.max(this.mob.root, n.root);
+        this.mob.offBalance = OFF_BALANCE;
         h.push -= n.push - slide;
-        if (slide < n.push - 1e-9) {
-          this.makeVulnerable(WALL_SLAM_MULT, WALL_SLAM_TIME);
-          this.emit({ t: this.time, type: "status", target: "mob", label: "Wall Slam!" });
-        }
+        if (slide < n.push - 1e-9) this.wallSlam();
       }
     }
+  }
+
+  /** One slash of an Uppercut Flurry. It's part of the bash, so the Bash → Heavy combo still follows it.
+   * Each slash but the last bumps the mob up just enough to stay airborne for the next. */
+  private slash(): void {
+    const f = this.flurry!;
+    const m = this.mob;
+    const h = this.hero;
+    // The Warrior leaps after the mob and hangs at its height for the slashes.
+    h.z += (Math.max(0, m.z - HERO_BELOW) - h.z) * 0.5;
+    h.vz = 0;
+    if (this.time < f.at - 1e-9) return;
+    if (this.slamNext()) {
+      // Heavy Strike takes the last slash: a powerful blow that drives the mob into the ground.
+      const landed = !this.nextDodge;
+      // The thrust is part of the same blow, so it carries Heavy Strike's multiplier and combo bonus.
+      const mult = N.heavyStrike(this.lv("heavyStrike")).mult * (this.peekCombo("heavyStrike")?.dmgMult ?? 1);
+      this.cds.set("heavyStrike", this.cooldown("heavyStrike"));
+      this.heroAttack(true);
+      this.flurry = null;
+      this.recover();
+      if (!landed) return;
+      // The blow hurls the mob down and bounces the Warrior up, to hang there and thrust down after it.
+      m.vz = -SLAM_SPEED;
+      h.vz = HOP_SPEED;
+      this.slamDown = { phase: "hop", at: 0, slammed: false, mult };
+      this.slamStep();
+      return;
+    }
+    this.physical(this.hero.s.dmg * FLURRY.mult, "slash", "Slash!", "shieldBash");
+    f.at = this.time + FLURRY.gap;
+    if (f.left > 1 && m.z > 0) m.vz = Math.max(m.vz, GRAVITY * FLURRY.gap);
+    // Decide now whether the finisher will be dodged, so the pause before it never announces a miss.
+    if (f.left === 2 && this.heavyReady()) {
+      f.slam = true;
+      this.rollDodge();
+    }
+    if (--f.left === 0) {
+      this.flurry = null;
+      this.recover();
+    }
+  }
+
+  /** After a Ground Slam's Heavy Strike: the slam lands when the mob hits the floor; the Warrior
+   * rises off the blow, hangs at the top, then thrusts down onto the mob to end the combo. */
+  private slamStep(): void {
+    const sl = this.slamDown!;
+    const m = this.mob;
+    const h = this.hero;
+    if (!sl.slammed && m.z === 0) {
+      sl.slammed = true;
+      this.emit({ t: this.time, type: "status", target: "mob", label: GROUND_SLAM_LABEL });
+    }
+    if (sl.phase === "hop" && h.vz <= 0) sl.phase = "hang";
+    if (sl.phase === "hang") {
+      h.vz = 0;
+      if (!sl.at) sl.at = this.time + SLAM_HANG;
+      if (this.time >= sl.at - 1e-9 && sl.slammed) {
+        sl.phase = "thrust";
+        h.vz = -THRUST_SPEED;
+      }
+    }
+    if (sl.phase === "thrust" && h.z === 0) {
+      this.physical(h.s.dmg * THRUST_MULT * sl.mult, "slash", THRUST_LABEL);
+      this.slamDown = null;
+      this.recover();
+    }
+  }
+
+  /** The flurry's next hit is its last and Heavy Strike is ready to take it. */
+  private slamNext(): boolean {
+    return this.flurry?.left === 1 && !!this.flurry.slam;
   }
 
   /** Heavy Strike is held for the swing right after Shield Bash, unless the bash is further off than a whole Heavy cooldown. */
@@ -619,9 +765,26 @@ export class Battle {
     this.mob.vuln = Math.max(this.mob.vuln, dur);
   }
 
-  /** Push the mob away; the far wall stops it. */
-  private knock(dist: number): void {
-    this.mob.push += Math.max(0, Math.min(dist, ARENA.length - this.mob.x - this.mob.push));
+  private wallSlam(): void {
+    this.makeVulnerable(WALL_SLAM_MULT, WALL_SLAM_TIME);
+    this.emit({ t: this.time, type: "status", target: "mob", label: "Wall Slam!" });
+  }
+
+  /** Knock the mob back along the attack: dist away from the hero, up into the air. It is left off balance.
+   * Airborne it flies AIR_KNOCK_MULT× as far, and slams into the far wall if that's in the way; the sky caps it at SKY. */
+  private knock(dist: number, up = 0): void {
+    const m = this.mob;
+    const air = m.z > 0 ? AIR_KNOCK_MULT : 1;
+    const room = Math.max(0, ARENA.length - m.x - m.push);
+    m.push += Math.min(dist * air, room);
+    if (air > 1 && dist * air > room + 1e-9) this.wallSlam();
+    if (up > 0) {
+      // Throw it up to `up` higher (×10 airborne): the launch speed that peaks there.
+      const peak = Math.min(SKY, m.z + (m.vz > 0 ? (m.vz * m.vz) / (2 * GRAVITY) : 0) + up * air);
+      m.vz = Math.sqrt(2 * GRAVITY * Math.max(0, peak - m.z));
+      m.z = Math.max(m.z, 1e-3);
+    }
+    if (m.z === 0) m.offBalance = OFF_BALANCE;
   }
 
   /** The ground zone the mob is standing in, if any. */
@@ -703,7 +866,7 @@ export class Battle {
   private dealToMob(dmg: number, crit: boolean, fx: FxKind, label?: string, skill?: SkillId): void {
     dmg *= this.slam();
     this.mob.hp -= dmg;
-    this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label, skill });
+    this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label, skill, ...(this.flurry ? { flurry: FLURRY.hits - this.flurry.left + 1 } : this.slamDown ? { flurry: FLURRY.hits + 1 } : {}) });
     const heal = dmg * (this.hero.s.lifesteal + (this.lv("bloodlust") ? N.bloodlust(this.lv("bloodlust")) : 0));
     this.healHero(heal);
     this.checkDeath();

@@ -1,5 +1,5 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
-import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
+import { AIRBORNE_LABEL, BAND_EDGE, GROUND_SLAM_LABEL, THRUST_LABEL, UPPERCUT_LABEL, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
 import { drawBurnFx, drawDerivedFx, drawProjectile, drawRootFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
 import { drawMeleeFx, drawStunStars, meleeFxDur, preloadMeleeFx, type MeleeFx } from "./meleeFx";
@@ -35,6 +35,17 @@ const fx = (battle: Battle, side: Side) => px(side === "hero" ? battle.hero.x : 
 const height = (id: string) => characterHeight(id) * CHAR_SCALE;
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const easeOut = (k: number) => 1 - (1 - k) ** 3;
+/** Combos and the hidden airborne launch share the pause, zoom, flash and banner. */
+const isCombo = (label: string) => label.startsWith("Combo") || label === AIRBORNE_LABEL || label === UPPERCUT_LABEL || label === GROUND_SLAM_LABEL;
+/** Uppercut Flurry slashes rise, cut flat, then come down, so a Heavy Strike taking the third reads as the downswing.
+ * The slash sheet is an overhead downswing: flipped it rises, squashed it cuts across. */
+const FLURRY_ANGLES: { flip?: boolean; squash?: number }[] = [{ flip: true }, { squash: 0.4 }, {}];
+/** How far into the Heavy Strike's strike the downward thrust holds: the blade swung down in front. */
+const THRUST_FRAME = 0.35;
+/** Screen px per arena unit of height: flatter than across, so a juggled mob stays on screen. */
+const LIFT_SCALE = 22;
+/** Screen px a fighter is lifted off the ground while airborne. */
+const lift = (battle: Battle, side: Side) => (side === "mob" ? battle.mob : battle.hero).z * LIFT_SCALE;
 
 export interface BattleLook {
   /** Character ids: a class id for the hero, a mob id for the mob. */
@@ -117,6 +128,8 @@ class Scene {
   freezeEnded = -99;
   /** Battle time of the last freeze, so resuming doesn't freeze on the same step again. */
   frozeAt = -1;
+  /** The mob was airborne last frame, to catch it landing. */
+  mobAir = false;
   /** When the mob was last slammed into the wall, for cracks. */
   wallHit = -9;
   /** Battle time of the last combo, so the hit that lands with it can play its combo look. */
@@ -196,15 +209,28 @@ export function playBattle(
         const attacker: Side = target === "mob" ? "hero" : "mob";
         const big = e.crit || e.label !== undefined;
         scene.anim[target].hurt = scene.now;
-        if (e.skill) {
+        // A slash of an Uppercut Flurry looks like a quick sword swing, not another bash.
+        const flurrySlash = !!e.flurry && e.skill === "shieldBash";
+        if (e.skill && !flurrySlash) {
           // After its wind-up a clip plays the strike part; a skill that never wound up plays it whole.
           const wound = scene.anim[attacker].skill?.id === e.skill && scene.anim[attacker].skill?.phase === "windup";
           scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: wound ? "strike" : "full", simAt: e.t, simEnd: e.t };
         }
-        if (e.fx === "slash" && !e.skill && target === "mob") {
+        if (e.label === THRUST_LABEL && target === "mob") {
+          // The downward thrust ends the combo: a star of impact, the floor cracks and a ring rolls out.
+          // The Heavy Strike's swing plays on from the held frame.
+          scene.anim[attacker].skill = { id: "heavyStrike", at: scene.now - THRUST_FRAME * SKILL_ANIM, phase: "strike", simAt: e.t, simEnd: e.t };
+          scene.melee.push({ kind: "kickImpact", born: scene.now, big: true, dx: -10 });
+          scene.melee.push({ kind: "groundCrack", born: scene.now + 0.03, big: true, floor: true });
+          scene.melee.push({ kind: "shockwave", born: scene.now + 0.03, floor: true });
+          scene.flashes.push({ born: scene.real, dur: 0.16, color: "255,255,255" });
+          scene.shake = Math.max(scene.shake, 14);
+        } else if (e.fx === "slash" && (!e.skill || flurrySlash) && target === "mob") {
           // A plain sword swing: a steel crescent across the mob, then a hit flash where the blade meets it.
+          // Flurry slashes cut from different angles: up, across, then down.
           scene.anim[attacker].lunge = scene.now;
-          scene.melee.push({ kind: "slash", born: scene.now, big: e.crit });
+          const angle = flurrySlash ? FLURRY_ANGLES[(e.flurry! - 1) % FLURRY_ANGLES.length] : {};
+          scene.melee.push({ kind: "slash", born: scene.now, big: e.crit || flurrySlash, ...angle });
           scene.melee.push({ kind: "hit", born: scene.now + 0.06, big: e.crit, dx: -12 });
         } else if (e.skill === "heavyStrike" || e.skill === "shieldBash" || e.skill === "charge" || e.skill === "spartanKick") {
           // These skills draw their own sprite effects in skillImpact.
@@ -227,7 +253,8 @@ export function playBattle(
         const color = target === "mob" ? (e.crit ? "#ffd84a" : "#ffffff") : "#ff6b5e";
         const absorbed = e.amount < 0.5;
         scene.floaters.push({ born: scene.now, side: target, text: absorbed ? "absorbed" : `${Math.round(e.amount)}${e.crit ? "!" : ""}`, color: absorbed ? "#6fb6ff" : color, size: absorbed ? 14 : e.crit ? 26 : 18, dx });
-        if (e.skill) skillImpact(scene, e.skill, dir, scene.comboAt === e.t);
+        if (flurrySlash) scene.floaters.push({ born: scene.now, side: attacker, text: e.label ?? "", color: "#ffe9a8", size: 17, dx: 0 });
+        else if (e.skill) skillImpact(scene, e.skill, dir, scene.comboAt === e.t);
         else if (e.label) scene.floaters.push({ born: scene.now, side: attacker, text: e.label, color: "#9fd3ff", size: 15, dx: 0 });
         break;
       }
@@ -260,14 +287,27 @@ export function playBattle(
         scene.anim.hero.skill = { id: e.skill, at: scene.now, phase: "windup", simAt: e.t, simEnd: e.at };
         break;
       case "status":
-        if (e.label.startsWith("Combo")) scene.comboAt = e.t;
-        if (e.label.startsWith("Combo")) {
+        if (isCombo(e.label)) scene.comboAt = e.t;
+        if (e.label === AIRBORNE_LABEL) launchFx(scene, x);
+        if (e.label === GROUND_SLAM_LABEL) {
+          // Driven into the floor: the ground cracks wide and a shockwave rolls out both ways.
+          scene.melee.push({ kind: "groundCrack", born: scene.now, big: true, floor: true });
+          scene.melee.push({ kind: "shockwave", born: scene.now + 0.04, big: true, floor: true });
+          scene.burst(x, GROUND - 4, 34, "rgba(190,170,140,0.9)", 220, 300, 7);
+          scene.shake = Math.max(scene.shake, 16);
+        }
+        if (e.label === UPPERCUT_LABEL) {
+          // The bash swings up through the airborne mob: a gold rising cleave and a burst of wind.
+          scene.melee.push({ kind: "heavySlash", born: scene.now, big: true, dx: -10 });
+          for (let i = 0; i < 12; i++) scene.particles.push({ x: x + rand(-18, 18), y: y + rand(0, 30), vx: rand(-15, 15), vy: -rand(260, 400), life: 0, max: rand(0.15, 0.3), size: rand(2, 4), color: "rgba(255,240,200,0.9)", gravity: 0 });
+        }
+        if (isCombo(e.label)) {
           // The combo hit lands: a bright flash, a kick of the camera and a shake.
           scene.flashes.push({ born: scene.real, dur: 0.2, color: "255,236,170" });
           scene.punch = scene.real;
           scene.shake = Math.max(scene.shake, 10);
         }
-        if (e.reaction || e.label.startsWith("Combo")) {
+        if (e.reaction || isCombo(e.label)) {
           // The pause before the hit already showed this banner; don't pop it again.
           if (scene.banner?.text === e.label && scene.real - scene.banner.born < COMBO_PAUSE + 0.6) break;
           scene.banner = { text: e.label, born: scene.real };
@@ -325,7 +365,11 @@ export function playBattle(
         scene.frozeAt = battle.time;
         scene.shake = 0;
         scene.banner = { text: combo, born: scene.real };
-        scene.cam = { born: scene.real, x: (sideX("hero") + sideX("mob")) / 2, y: GROUND - Math.max(heights.hero, heights.mob) * 0.55 };
+        // An airborne mob is the centre of attention, so the zoom keeps it in frame; otherwise it's between the fighters.
+        const up = lift(battle, "mob");
+        scene.cam = up > 0
+          ? { born: scene.real, x: sideX("mob") + 10, y: GROUND - up - heights.mob * 0.4 }
+          : { born: scene.real, x: (sideX("hero") + sideX("mob")) / 2, y: GROUND - Math.max(heights.hero, heights.mob) * 0.55 };
         scene.flashes.push({ born: scene.real, dur: 0.14, color: "255,255,255" });
         acc = 0;
         break;
@@ -450,8 +494,19 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
     const f = side === "hero" ? battle.hero : battle.mob;
     const dashing = side === "hero" && battle.dashing;
     if (dashing) a.walk += dt * 14;
+    // The plunging Warrior leaves a trail of speed lines.
+    if (side === "hero" && battle.slamDown?.phase === "thrust" && !reduced) {
+      for (let i = 0; i < 3; i++) scene.particles.push({ x: px(f.x) - STANDOFF + rand(-16, 16), y: GROUND - lift(battle, "hero") - rand(10, 70), vx: 0, vy: -rand(40, 90), life: 0, max: rand(0.12, 0.22), size: rand(2, 3), color: "rgba(255,255,255,0.85)", gravity: 0 });
+    }
+    if (side === "mob") {
+      const air = f.z > 0;
+      if (scene.mobAir && !air && battle.mob.hp > 0) landFx(scene, px(f.x) + STANDOFF);
+      scene.mobAir = air;
+      // Wind streaks trail a mob flying through the air.
+      if (air && !reduced) scene.particles.push({ x: px(f.x) + STANDOFF + rand(-14, 14), y: GROUND - lift(battle, "mob") - rand(10, 60), vx: f.push !== 0 ? -rand(120, 220) : rand(-20, 20), vy: f.vz > 0 ? rand(60, 140) : -rand(20, 60), life: 0, max: rand(0.15, 0.3), size: rand(2, 4), color: "rgba(255,255,255,0.8)", gravity: 0 });
+    }
     // Dust kicks up behind a dash and under a knocked-back fighter.
-    if ((dashing || f.push !== 0) && !reduced) {
+    if ((dashing || f.push !== 0) && f.z === 0 && !reduced) {
       const fx0 = px(f.x);
       for (let i = 0; i < 2; i++) scene.particles.push({ x: fx0 + rand(-6, 6), y: GROUND - rand(0, 6), vx: (dashing ? -1 : 1) * rand(30, 90), vy: rand(-40, -10), life: 0, max: rand(0.3, 0.6), size: rand(3, 6), color: "rgba(190,170,140,0.7)", gravity: 60 });
     }
@@ -519,7 +574,7 @@ function draw(
       windup: windup(battle, side),
       hurt,
       death: death ?? undefined,
-      skill: skillPose(a.skill, battle, t),
+      skill: (side === "hero" && thrustPose(battle)) || skillPose(a.skill, battle, t),
     });
     drawFighter(ctx, layer, {
       x, facing, h: heights[side],
@@ -532,21 +587,25 @@ function draw(
       frozen,
       aura: enraged ? "rgba(255,60,40,0.35)" : side === "hero" && f.shield > 0 ? "rgba(111,182,255,0.28)" : null,
       t,
+      lift: lift(battle, side),
+      // Thrown head over heels away from the hit: back on the way up, levelling out to land.
+      // Plunging into the downward thrust, the Warrior tips over toward the mob.
+      tilt: side === "hero" && battle.slamDown?.phase === "thrust" ? facing * 1.05 : side === "mob" && f.z > 0 ? -facing * Math.min(1, f.z / 1.5) * (f.vz > 0 ? 0.9 : 0.5) : 0,
     });
     if (f.vuln > 0) {
       // Wall Slam debuff marker beside the health bar.
       ctx.font = "16px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("🧱", x + 42, GROUND - heights[side] - 10);
+      ctx.fillText("🧱", x + 42, GROUND - heights[side] - 10 - lift(battle, side));
     }
-    drawBars(ctx, x, heights[side], f.hp / f.s.maxHp, side === "hero" ? "#5fe07a" : "#ff7a6b", f.shield / f.s.maxHp, f.stun > 0, f.root > 0, t, 0);
+    drawBars(ctx, x, heights[side], f.hp / f.s.maxHp, side === "hero" ? "#5fe07a" : "#ff7a6b", f.shield / f.s.maxHp, f.stun > 0, f.root > 0, t, lift(battle, side));
   }
 
   drawShots(ctx, scene, battle, look);
   if (battle.stoneRooted && battle.mob.hp > 0) drawRootFx(ctx, fx(battle, "mob"), GROUND, t);
   if (battle.burning && battle.mob.hp > 0) drawBurnFx(ctx, fx(battle, "mob"), GROUND, heights.mob, t);
   drawSpellFx(ctx, scene.spells, t, fx(battle, "mob"), GROUND, heights.mob);
-  drawMeleeFx(ctx, scene.melee, t, fx(battle, "mob"), GROUND, heights.mob);
+  drawMeleeFx(ctx, scene.melee, t, fx(battle, "mob"), GROUND, heights.mob, lift(battle, "mob"));
   drawBursts(ctx, scene);
   drawParticles(ctx, scene.particles);
   ctx.restore();
@@ -567,6 +626,15 @@ function draw(
   ctx.font = "13px system-ui, sans-serif";
   ctx.textAlign = "left";
   ctx.fillText(`${battle.time.toFixed(1)}s`, 10, 18);
+}
+
+/** Stand-in for a downward-thrust clip: the Heavy Strike's raised sword while the Warrior hangs at the top,
+ * then its downswing frame held, blade first, as he plunges. */
+function thrustPose(battle: Battle): Pose["skill"] {
+  const phase = battle.slamDown?.phase;
+  if (phase === "hang") return { id: "heavyStrike", phase: "windup", p: 1 };
+  if (phase === "thrust") return { id: "heavyStrike", phase: "strike", p: THRUST_FRAME };
+  return undefined;
 }
 
 function skillPose(s: FighterAnim["skill"], battle: Battle, t: number): Pose["skill"] {
@@ -643,6 +711,23 @@ function skillImpact(scene: Scene, skill: SkillId, dir: 1 | -1, combo: boolean):
     default:
       scene.shake = Math.max(scene.shake, 5);
   }
+}
+
+/** Hidden airborne launch: the boot or shoulder lands big, a ring bursts off the floor, and dust and wind shoot up. */
+function launchFx(scene: Scene, x: number): void {
+  scene.melee.push({ kind: "kickImpact", born: scene.now, big: true, dx: -6 });
+  scene.melee.push({ kind: "shockwave", born: scene.now + 0.03, big: true, floor: true });
+  scene.burst(x, GROUND - 4, 26, "rgba(200,190,170,0.85)", 160, -260, 6);
+  for (let i = 0; i < 14; i++) scene.particles.push({ x: x + rand(-22, 22), y: GROUND - rand(0, 40), vx: rand(-15, 15), vy: -rand(260, 420), life: 0, max: rand(0.18, 0.32), size: rand(2, 4), color: "rgba(255,255,255,0.9)", gravity: 0 });
+  scene.shake = Math.max(scene.shake, 12);
+}
+
+/** The airborne mob crashes back down: the ground cracks and a dust ring rolls out. */
+function landFx(scene: Scene, x: number): void {
+  scene.melee.push({ kind: "groundCrack", born: scene.now, floor: true });
+  scene.melee.push({ kind: "shockwave", born: scene.now, floor: true });
+  scene.burst(x, GROUND - 4, 22, "rgba(190,170,140,0.85)", 150, 300, 6);
+  scene.shake = Math.max(scene.shake, 9);
 }
 
 /** Mage element state: ground zones under the mob, clouds around it, and the waiting mark above it. */
@@ -793,16 +878,27 @@ interface FighterPose {
   frozen: boolean;
   aura: string | null;
   t: number;
+  /** Screen px off the ground, and a tumble in radians, while airborne. */
+  lift: number;
+  tilt: number;
 }
 
 function drawFighter(ctx: CanvasRenderingContext2D, layer: Layer, p: FighterPose): void {
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  // The shadow stays on the floor and shrinks as the fighter rises.
+  const shadow = 1 / (1 + p.lift / 80);
+  ctx.fillStyle = `rgba(0,0,0,${0.3 * shadow})`;
   ctx.beginPath();
-  ctx.ellipse(p.x, GROUND + 3, Math.max(16, p.h * 0.35), 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(p.x, GROUND + 3, Math.max(16, p.h * 0.35) * shadow, 6 * shadow, 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.save();
-  ctx.translate(p.x, GROUND);
+  ctx.translate(p.x, GROUND - p.lift);
+  if (p.tilt) {
+    // Tumble about the body's middle.
+    ctx.translate(0, -p.h / 2);
+    ctx.rotate(p.tilt);
+    ctx.translate(0, p.h / 2);
+  }
   if (p.death !== null) {
     // Fall backwards onto the ground, unless the clip plays the fall itself.
     if (!p.animatedDeath) {

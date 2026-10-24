@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ARENA, Battle, SKILL_RECOVERY, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
-import { BAND_EDGE, COMBOS, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
+import { AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, COMBOS, FLURRY, GROUND_SLAM_LABEL, OFF_BALANCE, THRUST_LABEL, UPPERCUT_LABEL, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
 import { CLASSES, stats } from "../src/core/stats";
 
 const dummy = stats({ maxHp: 1000, dmg: 0, interval: 99, range: 1.2, speed: 0 });
@@ -210,8 +210,9 @@ describe("battle", () => {
     const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1 }, dummy, 1);
     // Away from the far wall, so the whole knockback goes to the mob.
     b.mob.x = 12;
-    const x0 = b.mob.x;
     for (let i = 0; i < 600 && !b.events.some((e) => e.type === "damage" && e.skill === "spartanKick"); i++) b.step();
+    // The slide starts next tick, so this is where the kick found it (past the opening Charge's shove).
+    const x0 = b.mob.x;
     while (b.mob.push !== 0) b.step();
     // The dummy never walks, so all of its movement is the knockback.
     expect(b.mob.x - x0).toBeCloseTo(SKILL_NUM.spartanKick(1).push, 5);
@@ -323,7 +324,8 @@ describe("battle", () => {
     const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
     const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1, shieldBash: 1, heavyStrike: 1 }, wall, seed);
     for (let i = 0; i < 59 * 20; i++) b.step();
-    const hits = b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" ? [e] : []));
+    // An Uppercut Flurry's slashes (and a Heavy Strike that finishes it) are part of its bash.
+    const hits = b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" && !e.flurry ? [e] : []));
     expect(hits.length).toBeGreaterThan(20);
     for (let i = 1; i < hits.length; i++) {
       const gap = hits[i].t - hits[i - 1].t;
@@ -346,6 +348,11 @@ describe("battle", () => {
     for (const e of b.events) {
       if (e.type !== "damage" || e.target !== "mob") continue;
       const last = attacks[attacks.length - 1];
+      // An Uppercut Flurry's slashes (and a Heavy Strike that finishes it) are part of its bash: the next attack waits out recovery from the last.
+      if (e.flurry) {
+        last.t = e.t;
+        continue;
+      }
       if (last && Math.abs(last.t - e.t) < 1e-9) last.skill ??= e.skill;
       else attacks.push({ t: e.t, skill: e.skill });
     }
@@ -483,5 +490,108 @@ describe("ranger range bands", () => {
     expect(b.evade).toBeGreaterThan(0);
     for (let i = 0; i < 10; i++) b.step();
     expect(b.hero.x).toBeCloseTo(start - SKILL_NUM.disengage(1).leap, 5);
+  });
+});
+
+describe("hidden airborne combo", () => {
+  const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
+  const stepUntil = (b: Battle, pred: () => boolean, max = 600) => {
+    for (let i = 0; i < max && !pred(); i++) b.step();
+  };
+  const launched = (b: Battle) => () => b.events.some((e) => e.type === "status" && e.label === AIRBORNE_LABEL);
+
+  it("an unarmed hit on a knocked-back mob launches it, and it flies ×10 along the hit", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1 }, wall, 1);
+    b.mob.x = 8;
+    stepUntil(b, launched(b));
+    // Kick → Charge: the kick left it off balance and the Charge's shoulder launches it.
+    const charge = b.events.filter((e) => e.type === "damage").at(-1);
+    expect(charge?.type === "damage" && charge.skill).toBe("charge");
+    expect(b.mob.z).toBeGreaterThan(0);
+    const x0 = b.mob.x;
+    stepUntil(b, () => b.mob.z === 0);
+    while (b.mob.push !== 0) b.step();
+    expect(b.mob.x - x0).toBeCloseTo(SKILL_NUM.charge(1).push * AIR_KNOCK_MULT, 5);
+  });
+
+  it("the flight stops at the far wall with a Wall Slam", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1 }, wall, 1);
+    b.mob.x = 15;
+    stepUntil(b, launched(b));
+    stepUntil(b, () => b.mob.push === 0 && b.mob.z === 0);
+    expect(b.mob.x).toBeCloseTo(ARENA.length, 5);
+    expect(b.events.filter((e) => e.type === "status" && e.label === "Wall Slam!").length).toBeGreaterThan(0);
+    expect(b.mob.vuln).toBeGreaterThan(0);
+  });
+
+  it("an armed hit doesn't launch, and the opening wears off after OFF_BALANCE", () => {
+    // Only Shield Bash after a knock: armed, so no launch.
+    const b = new Battle(CLASSES.warrior.base, { shieldBash: 1 }, wall, 1);
+    b.mob.offBalance = OFF_BALANCE;
+    stepUntil(b, () => b.events.some((e) => e.type === "damage" && e.skill === "shieldBash"));
+    expect(b.events.some((e) => e.type === "status" && e.label === AIRBORNE_LABEL)).toBe(false);
+    // A kick alone never follows a knock in time: the kick's own opening is gone by its next cooldown.
+    const k = new Battle(CLASSES.warrior.base, { spartanKick: 1 }, wall, 1);
+    for (let i = 0; i < 40 * 20; i++) k.step();
+    expect(k.events.some((e) => e.type === "status" && e.label === AIRBORNE_LABEL)).toBe(false);
+  });
+
+  it("the view pauses on a launch like a combo", () => {
+    const b = new Battle(CLASSES.warrior.base, { spartanKick: 1 }, wall, 1);
+    stepUntil(b, () => b.events.some((e) => e.type === "windup"));
+    expect(b.comboNext()).toBe(null);
+    // Off balance from some other knock as the Kick winds up: no regular combo, so the pause names the launch.
+    b.mob.offBalance = OFF_BALANCE;
+    stepUntil(b, () => b.comboNext() !== null);
+    expect(b.comboNext()).toBe(AIRBORNE_LABEL);
+    b.step();
+    expect(launched(b)()).toBe(true);
+  });
+
+  it("Shield Bash on an airborne mob is an uppercut and a flurry of slashes, all in the air", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1, shieldBash: 1 }, wall, 1);
+    b.mob.x = 8;
+    stepUntil(b, () => b.events.some((e) => e.type === "status" && e.label === UPPERCUT_LABEL));
+    expect(b.mob.z).toBeGreaterThan(0);
+    const slashes = () => b.events.filter((e) => e.type === "damage" && e.flurry).length;
+    // Each slash keeps it up for the next, so the whole flurry lands on an airborne mob.
+    while (slashes() < FLURRY.hits) {
+      expect(b.mob.z).toBeGreaterThan(0);
+      b.step();
+    }
+    // The Warrior leapt up after it, and comes back down once the flurry ends.
+    expect(b.hero.z).toBeGreaterThan(0);
+    stepUntil(b, () => b.hero.z === 0);
+    expect(b.hero.z).toBe(0);
+    const flurry = b.events.filter((e) => e.type === "damage" && e.flurry);
+    for (let i = 1; i < flurry.length; i++) expect(flurry[i].t - flurry[i - 1].t).toBeCloseTo(FLURRY.gap, 5);
+  });
+
+  it("with Heavy Strike ready, it takes the last slash and slams the mob into the ground", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1, shieldBash: 1, heavyStrike: 1 }, wall, 1);
+    b.mob.x = 8;
+    let paused: string | null = null;
+    for (let i = 0; i < 600 && !b.events.some((e) => e.type === "status" && e.label === GROUND_SLAM_LABEL); i++) {
+      if (b.events.some((e) => e.type === "status" && e.label === UPPERCUT_LABEL)) paused ??= b.comboNext();
+      b.step();
+    }
+    const flurry = b.events.filter((e) => e.type === "damage" && e.flurry);
+    expect(flurry.map((e) => e.type === "damage" && e.skill)).toEqual(["shieldBash", "shieldBash", "heavyStrike"]);
+    // It's still the Bash → Heavy combo, and the view pauses on it.
+    expect(paused).toBe("Combo! +33%");
+    expect(b.mob.z).toBe(0);
+    // Thrown down, it slams a beat after the Heavy Strike, while the Warrior bounces up off the blow.
+    const heavy = flurry.at(-1)!;
+    const slam = b.events.find((e) => e.type === "status" && e.label === GROUND_SLAM_LABEL)!;
+    expect(slam.t).toBeGreaterThan(heavy.t);
+    expect(b.hero.z).toBeGreaterThan(0);
+    // Then a downward thrust ends the combo, once the Warrior is back on the ground.
+    stepUntil(b, () => b.events.some((e) => e.type === "damage" && e.label === THRUST_LABEL));
+    expect(b.hero.z).toBe(0);
+    expect(b.slamDown).toBeNull();
+    // It hits as hard as the Heavy Strike itself, combo bonus included (the wall never dodges, crits aside).
+    const thrust = b.events.find((e) => e.type === "damage" && e.label === THRUST_LABEL)!;
+    const heavyHit = heavy.type === "damage" && heavy;
+    if (thrust.type === "damage" && heavyHit && !thrust.crit && !heavyHit.crit) expect(thrust.amount).toBeCloseTo(heavyHit.amount, 5);
   });
 });

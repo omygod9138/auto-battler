@@ -46,6 +46,23 @@ export const COMBOS: Combo[] = [
   { pair: ["shieldBash", "heavyStrike"], dmgMult: 1.33, label: "Combo! +33%" },
 ];
 
+/** Hidden, for every class: an unarmed attack on a knocked-back mob launches it airborne,
+ * and knockback on an airborne mob goes AIR_KNOCK_MULT× as far along the attack. Not shown on any card. */
+export const UNARMED: SkillId[] = ["spartanKick", "charge"];
+export const AIR_KNOCK_MULT = 10;
+/** Seconds after a knockback lands that the mob is still off balance, open to an unarmed launch. */
+export const OFF_BALANCE = 2;
+export const AIRBORNE_LABEL = "Airborne!";
+/** Hidden: Shield Bash on an airborne mob becomes an uppercut (thrown UPPERCUT_UP higher, ×10 airborne)
+ * and FLURRY quick slashes, each × hero damage, FLURRY_GAP seconds apart. */
+export const UPPERCUT_LABEL = "Uppercut Flurry!";
+export const UPPERCUT_UP = 0.3;
+export const FLURRY = { hits: 3, mult: 0.6, gap: 0.15 };
+/** Hidden: with Heavy Strike ready, it replaces the flurry's last slash and slams the mob into the ground. */
+export const GROUND_SLAM_LABEL = "Ground Slam!";
+/** Then the Warrior, bounced up off the blow, ends the combo with a downward thrust. */
+export const THRUST_LABEL = "Downward Thrust!";
+
 /** Ranger range bands, by distance from hero to mob. Each Ranger skill is strongest in one band. */
 export type Band = "close" | "mid" | "far";
 export const BAND_EDGE = { close: 3, mid: 6 };
@@ -176,7 +193,8 @@ export const SKILL_NUM = {
   thorns: (lv: number) => 0.15 + 0.15 * lv,
   secondWind: (lv: number) => 0.25 + 0.15 * lv,
   // Same cooldown as Shield Bash, so every Charge can be followed by a Bash.
-  charge: (lv: number) => ({ cd: 6, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv }),
+  // The shove is small on its own; it matters when an airborne mob takes it ×10.
+  charge: (lv: number) => ({ cd: 6, range: 6, mult: 1.5 + 0.5 * lv, stun: 0.5 + 0.5 * lv, push: 0.5 }),
   // Far enough that the Charge after it gets a proper run-up, still inside Charge's 6m range.
   spartanKick: (lv: number) => ({ cd: 8 - lv, mult: 0.8 + 0.2 * lv, push: 4, root: 1 }),
   longshot: (lv: number) => ({ cd: 7 - lv, mult: 2.5 + lv }),
