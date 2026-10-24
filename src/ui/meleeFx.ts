@@ -1,7 +1,7 @@
 // Warrior melee effects: PixelLab vfx_workbench sprite sheets (src/assets/vfx/<name>/), played once each.
 // Sheets are TexturePacker JSON + PNG; blank trailing frames in an export are dropped at load.
 
-export type MeleeFxKind = "slash" | "hit" | "shockwave";
+export type MeleeFxKind = "slash" | "hit" | "shockwave" | "heavySlash" | "groundCrack";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface MeleeFx {
@@ -33,6 +33,8 @@ const LOOK: Record<MeleeFxKind, { file: string; at: number; scale: number }> = {
   slash: { file: "warrior_slash/warrior-slash", at: 0.55, scale: 1 },
   hit: { file: "warrior_hit/warrior-hit", at: 0.5, scale: 1 },
   shockwave: { file: "warrior_shockwave/warrior-shockwave", at: 0, scale: 1 },
+  heavySlash: { file: "heavy_slash/heavy-slash", at: 0.55, scale: 1 },
+  groundCrack: { file: "ground_crack/ground-crack", at: 0, scale: 1 },
 };
 
 const sheets = new Map<MeleeFxKind, Sheet>();

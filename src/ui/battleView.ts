@@ -114,6 +114,8 @@ class Scene {
   frozeAt = -1;
   /** When the mob was last slammed into the wall, for cracks. */
   wallHit = -9;
+  /** Battle time of the last combo, so the hit that lands with it can play its combo look. */
+  comboAt = -1;
   /** A large centred callout, for combos. */
   banner: { text: string; born: number } | null = null;
   anim: Record<Side, FighterAnim> = {
@@ -193,6 +195,9 @@ export function playBattle(
           scene.anim[attacker].lunge = scene.now;
           scene.melee.push({ kind: "slash", born: scene.now, big: e.crit });
           scene.melee.push({ kind: "hit", born: scene.now + 0.06, big: e.crit, dx: -12 });
+        } else if (e.skill === "heavyStrike") {
+          // Heavy Strike draws its own sprite effects in skillImpact.
+          scene.anim[attacker].lunge = scene.now;
         } else if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
           scene.anim[attacker].lunge = scene.now;
           scene.add({ kind: "slash", dur: 0.22, x: x - dir * 10, y, color: e.fx === "claw" ? "#ff9f9f" : "#ffffff", size: big ? 46 : 34, dir });
@@ -211,7 +216,7 @@ export function playBattle(
         const color = target === "mob" ? (e.crit ? "#ffd84a" : "#ffffff") : "#ff6b5e";
         const absorbed = e.amount < 0.5;
         scene.floaters.push({ born: scene.now, side: target, text: absorbed ? "absorbed" : `${Math.round(e.amount)}${e.crit ? "!" : ""}`, color: absorbed ? "#6fb6ff" : color, size: absorbed ? 14 : e.crit ? 26 : 18, dx });
-        if (e.skill) skillImpact(scene, e.skill, x, y, dir);
+        if (e.skill) skillImpact(scene, e.skill, x, y, dir, scene.comboAt === e.t);
         else if (e.label) scene.floaters.push({ born: scene.now, side: attacker, text: e.label, color: "#9fd3ff", size: 15, dx: 0 });
         break;
       }
@@ -244,6 +249,7 @@ export function playBattle(
         scene.anim.hero.skill = { id: e.skill, at: scene.now, phase: "windup", simAt: e.t, simEnd: e.at };
         break;
       case "status":
+        if (e.label.startsWith("Combo")) scene.comboAt = e.t;
         if (e.reaction || e.label.startsWith("Combo")) {
           // The pause before the hit already showed this banner; don't pop it again.
           if (scene.banner?.text === e.label && scene.real - scene.banner.born < COMBO_PAUSE + 0.6) break;
@@ -567,7 +573,7 @@ function drawBands(ctx: CanvasRenderingContext2D, battle: Battle): void {
   ctx.restore();
 }
 
-function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 | -1): void {
+function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 | -1, combo: boolean): void {
   const k = SKILLS[skill];
   scene.floaters.push({ born: scene.now, side: dir === 1 ? "hero" : "mob", text: `${k.icon} ${k.name}`, color: "#ffd34d", size: 24, dx: 0 });
   const hit = x - dir * 14;
@@ -579,10 +585,13 @@ function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 
       scene.shake = Math.max(scene.shake, 9);
       break;
     case "heavyStrike":
-      scene.add({ kind: "ring", dur: 0.4, x, y: GROUND - 4, color: "#ffb347", size: 70, dir });
-      scene.burst(x, GROUND - 2, 34, "rgba(170,140,100,0.9)", 220, 500, 6);
-      scene.burst(x, y, 16, "#ffd27a", 240, 300, 4);
-      scene.shake = Math.max(scene.shake, 10);
+      // A gold overhead cleave, then the ground cracks under the blow. As a combo finisher it cuts
+      // bigger and a shockwave rolls out along the floor.
+      scene.melee.push({ kind: "heavySlash", born: scene.now, big: combo, dx: -20 });
+      scene.melee.push({ kind: "hit", born: scene.now + 0.05, big: combo, dx: -12 });
+      scene.melee.push({ kind: "groundCrack", born: scene.now + 0.1, big: combo });
+      if (combo) scene.melee.push({ kind: "shockwave", born: scene.now + 0.1, big: true });
+      scene.shake = Math.max(scene.shake, combo ? 14 : 10);
       break;
     case "charge":
       scene.add({ kind: "ring", dur: 0.5, x: hit, y, color: "#ffd34d", size: 90, dir });
