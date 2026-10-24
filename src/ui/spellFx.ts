@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian" | "electrocute" | "fireball";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian" | "electrocute" | "fireball" | "gust";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -14,7 +14,7 @@ export interface SpellFx {
 /** Effects by reaction name. */
 export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam", Eruption: "eruption", Obsidian: "obsidian", Electrocute: "electrocute" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4, electrocute: 1.7, fireball: 0.8 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4, electrocute: 1.7, fireball: 0.8, gust: 0.75 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -70,6 +70,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "obsidian") obsidian(dot, ax, ag, ah, age);
     if (f.kind === "electrocute") electrocute(dot, ax, ag, ah, age, ctx);
     if (f.kind === "fireball") fireballBlast(dot, ax, ag, ah, age);
+    if (f.kind === "gust") gustHit(dot, ax, ag, ah, age);
   }
 }
 
@@ -956,11 +957,15 @@ function electrocute(dot: Dot, ax: number, ag: number, ah: number, age: number, 
 
 /** A projectile in flight, centred on screen (x, y) and heading dir (1 = right). Returns false if it has no pixel art yet. */
 export function drawProjectile(ctx: CanvasRenderingContext2D, fx: string, x: number, y: number, dir: number, t: number): boolean {
-  if (fx !== "fireball") return false;
+  if (fx !== "fireball" && fx !== "wind") return false;
   const dot = dotter(ctx);
   const cx = Math.round(x / P);
   const cy = Math.round(y / P);
   const frame = Math.floor(t * FPS * 2);
+  if (fx === "wind") {
+    windBlade(dot, cx, cy, dir, frame);
+    return true;
+  }
   // Flame tail streams out behind, flickering and narrowing.
   for (let k = 1; k < 12; k++) {
     const w = Math.max(0, Math.round(3 - k * 0.3 + (hash(k, frame, 91) - 0.5) * 2));
@@ -1029,5 +1034,84 @@ export function drawBurnFx(ctx: CanvasRenderingContext2D, x: number, ground: num
       dot(fx + sway, fy - y, FIRE[Math.min(4, (tall - 1 - y) === 0 ? 0 : y === 0 ? 3 : 1 + (y % 2))]);
       if (y === 0) dot(fx + sway + 1, fy, FIRE[2]);
     }
+  }
+}
+
+/** Gust in flight: a pale crescent blade, bright on its leading edge, with speed lines streaming behind. */
+function windBlade(dot: Dot, cx: number, cy: number, dir: number, frame: number): void {
+  // Speed lines flicker in length behind the blade.
+  for (let i = -3; i <= 3; i++) {
+    const len = 5 + Math.round(hash(i, frame, 97) * 7) - Math.abs(i);
+    const x0 = cx - dir * (2 + Math.abs(i));
+    dot(dir > 0 ? x0 - len : x0 + 1, cy + i * 2, WIND[1], len, 1);
+  }
+  crescent(dot, cx, cy, dir, 8, 4, frame);
+}
+
+/** A crescent bowing toward dir, r art pixels tall each way and up to thick wide in the middle. */
+function crescent(dot: Dot, cx: number, cy: number, dir: number, r: number, thick: number, frame: number): void {
+  for (let y = -r; y <= r; y++) {
+    const e = Math.abs(y) / r;
+    const bow = Math.round(Math.sqrt(1 - e * e) * r * 0.55);
+    const w = Math.max(1, Math.round(thick * (1 - e * e)));
+    for (let k = 0; k < w; k++) dot(cx + dir * (bow - k), cy + y, k === 0 ? WIND[0] : k === w - 1 && w > 2 ? "#6fc4d8" : WIND[1]);
+  }
+  // A glint runs along the edge.
+  const g = ((frame % 8) / 7) * 2 - 1;
+  dot(cx + dir * (Math.round(Math.sqrt(1 - g * g) * r * 0.55) + 1), cy + Math.round(g * r * 0.8), "#ffffff");
+}
+
+/** Gust lands: a crescent slash cuts through the mob, then wind rips past it, curling and kicking up dust as it shoves the mob back. */
+function gustHit(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const dur = SPELL_FX_DUR.gust;
+  const cy = ag - Math.round(ah * 0.5);
+  const r = Math.max(8, Math.round(ah * 0.45));
+  // Slash: the blade grows to body height as it cuts through, then shrinks and fades out the far side.
+  if (age < 0.3) {
+    const k = age / 0.3;
+    const size = Math.round(r * (k < 0.4 ? 0.6 + k : 1.4 - k));
+    crescent(dot, ax - 6 + Math.round(k * 22), cy, 1, size, Math.max(1, Math.round(5 * (1 - k))), frame);
+  }
+  // Shock ripples roll on behind it.
+  for (let j = 0; j < 2; j++) {
+    const t = age - 0.12 - j * 0.1;
+    if (t < 0 || t > 0.3) continue;
+    const rr = Math.round(r * (0.7 + t * 1.5));
+    for (let y = -rr; y <= rr; y += 2) {
+      const e = Math.abs(y) / rr;
+      if (hash(j, y, frame) < t / 0.3) continue;
+      dot(ax + 4 + Math.round(t * 60) + Math.round(Math.sqrt(1 - e * e) * rr * 0.5), cy + y, WIND[1]);
+    }
+  }
+  // Wind rips past from left to right, line after line.
+  for (let i = 0; i < 9; i++) {
+    const t = age - hash(i, 0, 98) * 0.3;
+    if (t < 0 || t > 0.4) continue;
+    const gy = ag - 2 - Math.round(hash(i, 1, 98) * ah * 1.1);
+    const head = ax - 18 + Math.round(t * 120);
+    const len = 4 + Math.round(hash(i, 2, 98) * 6) + Math.round((1 - t / 0.4) * 4);
+    dot(head - len, gy, WIND[i % 2], len, 1);
+    // Some lines hook into a curl as they leave.
+    if (i % 3 === 0 && t > 0.15) curl(dot, head, gy, t, i);
+  }
+  // Dust kicked up off the floor, blown back and settling.
+  for (let i = 0; i < 10; i++) {
+    const t = age - 0.08 - hash(i, 3, 99) * 0.12;
+    if (t < 0) continue;
+    const x = ax - 4 + Math.round((24 + hash(i, 4, 99) * 50) * t);
+    const y = ag - 1 - Math.round((10 + hash(i, 5, 99) * 14) * t - 30 * t * t);
+    if (y >= ag || hash(i, frame, 99) < t / (dur - 0.08)) continue;
+    dot(x, y, SAND[1 + (i % 3)]);
+  }
+}
+
+/** A small wind curl at (x, y): a spiral that winds in as t grows. */
+function curl(dot: Dot, x: number, y: number, t: number, seed: number): void {
+  const n = Math.round(Math.min(1, (t - 0.15) / 0.2) * 14);
+  for (let s = 0; s < n; s++) {
+    const a = s * 0.5 - Math.PI / 2;
+    const r = 4.5 - s * 0.25;
+    dot(x + Math.round(Math.cos(a) * r), y - 4 + Math.round(Math.sin(a) * r), WIND[(s + seed) % 2]);
   }
 }
