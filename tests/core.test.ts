@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ARENA, Battle, SKILL_RECOVERY, WALL_SLAM_MULT, WALL_SLAM_TIME, WINDUP } from "../src/core/battle";
 import { mobForRound } from "../src/core/mobs";
 import { chooseSkill, finishBattle, newRun, reroll, skillPool, startBattle } from "../src/core/run";
-import { AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, COMBOS, OFF_BALANCE, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
+import { AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, COMBOS, FLURRY, GROUND_SLAM_LABEL, OFF_BALANCE, UPPERCUT_LABEL, MAX_LEVEL, SKILLS, SKILL_NUM, heroStats } from "../src/core/skills";
 import { CLASSES, stats } from "../src/core/stats";
 
 const dummy = stats({ maxHp: 1000, dmg: 0, interval: 99, range: 1.2, speed: 0 });
@@ -324,7 +324,8 @@ describe("battle", () => {
     const wall = stats({ maxHp: 1e6, dmg: 0, interval: 99, range: 1.2, speed: 0 });
     const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1, shieldBash: 1, heavyStrike: 1 }, wall, seed);
     for (let i = 0; i < 59 * 20; i++) b.step();
-    const hits = b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" ? [e] : []));
+    // An Uppercut Flurry's slashes (and a Heavy Strike that finishes it) are part of its bash.
+    const hits = b.events.flatMap((e) => (e.type === "damage" && e.target === "mob" && !e.flurry ? [e] : []));
     expect(hits.length).toBeGreaterThan(20);
     for (let i = 1; i < hits.length; i++) {
       const gap = hits[i].t - hits[i - 1].t;
@@ -347,6 +348,11 @@ describe("battle", () => {
     for (const e of b.events) {
       if (e.type !== "damage" || e.target !== "mob") continue;
       const last = attacks[attacks.length - 1];
+      // An Uppercut Flurry's slashes (and a Heavy Strike that finishes it) are part of its bash: the next attack waits out recovery from the last.
+      if (e.flurry) {
+        last.t = e.t;
+        continue;
+      }
       if (last && Math.abs(last.t - e.t) < 1e-9) last.skill ??= e.skill;
       else attacks.push({ t: e.t, skill: e.skill });
     }
@@ -540,5 +546,35 @@ describe("hidden airborne combo", () => {
     expect(b.comboNext()).toBe(AIRBORNE_LABEL);
     b.step();
     expect(launched(b)()).toBe(true);
+  });
+
+  it("Shield Bash on an airborne mob is an uppercut and a flurry of slashes, all in the air", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1, shieldBash: 1 }, wall, 1);
+    b.mob.x = 8;
+    stepUntil(b, () => b.events.some((e) => e.type === "status" && e.label === UPPERCUT_LABEL));
+    expect(b.mob.z).toBeGreaterThan(0);
+    const slashes = () => b.events.filter((e) => e.type === "damage" && e.flurry).length;
+    // Each slash keeps it up for the next, so the whole flurry lands on an airborne mob.
+    while (slashes() < FLURRY.hits) {
+      expect(b.mob.z).toBeGreaterThan(0);
+      b.step();
+    }
+    const flurry = b.events.filter((e) => e.type === "damage" && e.flurry);
+    for (let i = 1; i < flurry.length; i++) expect(flurry[i].t - flurry[i - 1].t).toBeCloseTo(FLURRY.gap, 5);
+  });
+
+  it("with Heavy Strike ready, it takes the last slash and slams the mob into the ground", () => {
+    const b = new Battle(CLASSES.warrior.base, { charge: 1, spartanKick: 1, shieldBash: 1, heavyStrike: 1 }, wall, 1);
+    b.mob.x = 8;
+    let paused: string | null = null;
+    for (let i = 0; i < 600 && !b.events.some((e) => e.type === "status" && e.label === GROUND_SLAM_LABEL); i++) {
+      if (b.events.some((e) => e.type === "status" && e.label === UPPERCUT_LABEL)) paused ??= b.comboNext();
+      b.step();
+    }
+    const flurry = b.events.filter((e) => e.type === "damage" && e.flurry);
+    expect(flurry.map((e) => e.type === "damage" && e.skill)).toEqual(["shieldBash", "shieldBash", "heavyStrike"]);
+    // It's still the Bash → Heavy combo, and the view pauses on it.
+    expect(paused).toBe("Combo! +33%");
+    expect(b.mob.z).toBe(0);
   });
 });

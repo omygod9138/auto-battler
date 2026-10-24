@@ -53,6 +53,13 @@ export const AIR_KNOCK_MULT = 10;
 /** Seconds after a knockback lands that the mob is still off balance, open to an unarmed launch. */
 export const OFF_BALANCE = 2;
 export const AIRBORNE_LABEL = "Airborne!";
+/** Hidden: Shield Bash on an airborne mob becomes an uppercut (thrown UPPERCUT_UP higher, ×10 airborne)
+ * and FLURRY quick slashes, each × hero damage, FLURRY_GAP seconds apart. */
+export const UPPERCUT_LABEL = "Uppercut Flurry!";
+export const UPPERCUT_UP = 0.3;
+export const FLURRY = { hits: 3, mult: 0.6, gap: 0.15 };
+/** Hidden: with Heavy Strike ready, it replaces the flurry's last slash and slams the mob into the ground. */
+export const GROUND_SLAM_LABEL = "Ground Slam!";
 
 /** Ranger range bands, by distance from hero to mob. Each Ranger skill is strongest in one band. */
 export type Band = "close" | "mid" | "far";

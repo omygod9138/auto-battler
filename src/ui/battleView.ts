@@ -1,5 +1,5 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
-import { AIRBORNE_LABEL, BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
+import { AIRBORNE_LABEL, BAND_EDGE, GROUND_SLAM_LABEL, UPPERCUT_LABEL, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
 import { drawBurnFx, drawDerivedFx, drawProjectile, drawRootFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
 import { drawMeleeFx, drawStunStars, meleeFxDur, preloadMeleeFx, type MeleeFx } from "./meleeFx";
@@ -36,9 +36,11 @@ const height = (id: string) => characterHeight(id) * CHAR_SCALE;
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const easeOut = (k: number) => 1 - (1 - k) ** 3;
 /** Combos and the hidden airborne launch share the pause, zoom, flash and banner. */
-const isCombo = (label: string) => label.startsWith("Combo") || label === AIRBORNE_LABEL;
+const isCombo = (label: string) => label.startsWith("Combo") || label === AIRBORNE_LABEL || label === UPPERCUT_LABEL || label === GROUND_SLAM_LABEL;
+/** Screen px per arena unit of height: flatter than across, so a juggled mob stays on screen. */
+const LIFT_SCALE = 22;
 /** Screen px a fighter is lifted off the ground while airborne. */
-const lift = (battle: Battle, side: Side) => (side === "mob" ? battle.mob.z * SCALE : 0);
+const lift = (battle: Battle, side: Side) => (side === "mob" ? battle.mob.z * LIFT_SCALE : 0);
 
 export interface BattleLook {
   /** Character ids: a class id for the hero, a mob id for the mob. */
@@ -202,12 +204,14 @@ export function playBattle(
         const attacker: Side = target === "mob" ? "hero" : "mob";
         const big = e.crit || e.label !== undefined;
         scene.anim[target].hurt = scene.now;
-        if (e.skill) {
+        // A slash of an Uppercut Flurry looks like a quick sword swing, not another bash.
+        const flurrySlash = e.flurry && e.skill === "shieldBash";
+        if (e.skill && !flurrySlash) {
           // After its wind-up a clip plays the strike part; a skill that never wound up plays it whole.
           const wound = scene.anim[attacker].skill?.id === e.skill && scene.anim[attacker].skill?.phase === "windup";
           scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: wound ? "strike" : "full", simAt: e.t, simEnd: e.t };
         }
-        if (e.fx === "slash" && !e.skill && target === "mob") {
+        if (e.fx === "slash" && (!e.skill || flurrySlash) && target === "mob") {
           // A plain sword swing: a steel crescent across the mob, then a hit flash where the blade meets it.
           scene.anim[attacker].lunge = scene.now;
           scene.melee.push({ kind: "slash", born: scene.now, big: e.crit });
@@ -233,7 +237,8 @@ export function playBattle(
         const color = target === "mob" ? (e.crit ? "#ffd84a" : "#ffffff") : "#ff6b5e";
         const absorbed = e.amount < 0.5;
         scene.floaters.push({ born: scene.now, side: target, text: absorbed ? "absorbed" : `${Math.round(e.amount)}${e.crit ? "!" : ""}`, color: absorbed ? "#6fb6ff" : color, size: absorbed ? 14 : e.crit ? 26 : 18, dx });
-        if (e.skill) skillImpact(scene, e.skill, dir, scene.comboAt === e.t);
+        if (flurrySlash) scene.floaters.push({ born: scene.now, side: attacker, text: e.label ?? "", color: "#ffe9a8", size: 17, dx: 0 });
+        else if (e.skill) skillImpact(scene, e.skill, dir, scene.comboAt === e.t);
         else if (e.label) scene.floaters.push({ born: scene.now, side: attacker, text: e.label, color: "#9fd3ff", size: 15, dx: 0 });
         break;
       }
@@ -268,6 +273,18 @@ export function playBattle(
       case "status":
         if (isCombo(e.label)) scene.comboAt = e.t;
         if (e.label === AIRBORNE_LABEL) launchFx(scene, x);
+        if (e.label === GROUND_SLAM_LABEL) {
+          // Driven into the floor: the ground cracks wide and a shockwave rolls out both ways.
+          scene.melee.push({ kind: "groundCrack", born: scene.now, big: true, floor: true });
+          scene.melee.push({ kind: "shockwave", born: scene.now + 0.04, big: true, floor: true });
+          scene.burst(x, GROUND - 4, 34, "rgba(190,170,140,0.9)", 220, 300, 7);
+          scene.shake = Math.max(scene.shake, 16);
+        }
+        if (e.label === UPPERCUT_LABEL) {
+          // The bash swings up through the airborne mob: a gold rising cleave and a burst of wind.
+          scene.melee.push({ kind: "heavySlash", born: scene.now, big: true, dx: -10 });
+          for (let i = 0; i < 12; i++) scene.particles.push({ x: x + rand(-18, 18), y: y + rand(0, 30), vx: rand(-15, 15), vy: -rand(260, 400), life: 0, max: rand(0.15, 0.3), size: rand(2, 4), color: "rgba(255,240,200,0.9)", gravity: 0 });
+        }
         if (isCombo(e.label)) {
           // The combo hit lands: a bright flash, a kick of the camera and a shake.
           scene.flashes.push({ born: scene.real, dur: 0.2, color: "255,236,170" });
@@ -332,7 +349,11 @@ export function playBattle(
         scene.frozeAt = battle.time;
         scene.shake = 0;
         scene.banner = { text: combo, born: scene.real };
-        scene.cam = { born: scene.real, x: (sideX("hero") + sideX("mob")) / 2, y: GROUND - Math.max(heights.hero, heights.mob) * 0.55 };
+        // An airborne mob is the centre of attention, so the zoom keeps it in frame; otherwise it's between the fighters.
+        const up = lift(battle, "mob");
+        scene.cam = up > 0
+          ? { born: scene.real, x: sideX("mob") + 10, y: GROUND - up - heights.mob * 0.4 }
+          : { born: scene.real, x: (sideX("hero") + sideX("mob")) / 2, y: GROUND - Math.max(heights.hero, heights.mob) * 0.55 };
         scene.flashes.push({ born: scene.real, dur: 0.14, color: "255,255,255" });
         acc = 0;
         break;
@@ -548,7 +569,7 @@ function draw(
       t,
       lift: lift(battle, side),
       // Thrown head over heels away from the hit: back on the way up, levelling out to land.
-      tilt: f.z > 0 ? facing * Math.min(1, f.z / 1.5) * (f.vz > 0 ? 0.9 : 0.5) : 0,
+      tilt: f.z > 0 ? -facing * Math.min(1, f.z / 1.5) * (f.vz > 0 ? 0.9 : 0.5) : 0,
     });
     if (f.vuln > 0) {
       // Wall Slam debuff marker beside the health bar.
