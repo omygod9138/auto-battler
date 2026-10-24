@@ -1,4 +1,6 @@
 export type ClassId = "warrior" | "ranger" | "mage";
+/** An ascended form a class can take after round 20. */
+export type PathId = "berserker";
 
 /** Combat numbers for one fighter. Skills mutate a copy of the class base. */
 export interface Stats {

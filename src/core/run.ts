@@ -1,13 +1,15 @@
+import { ASCEND_ROUND, ascendStats, pathsOf } from "./ascension";
 import { Battle } from "./battle";
 import { mobForRound, type MobDef } from "./mobs";
 import { Rng, hashSeed } from "./rng";
 import { MAX_LEVEL, SKILLS, heroStats, type SkillCat, type SkillId, type SkillLevels } from "./skills";
-import { CLASSES, type ClassId, type Stats } from "./stats";
+import { CLASSES, type ClassId, type PathId, type Stats } from "./stats";
 
 export const OFFER_SIZE = 3;
 export const REROLLS_PER_RUN = 3;
 
-export type Phase = "choose" | "battle" | "over";
+/** "ascend": the round-20 boss is beaten and the player picks a path before the next skill. */
+export type Phase = "choose" | "battle" | "ascend" | "over";
 
 export interface RunState {
   seed: number;
@@ -19,19 +21,27 @@ export interface RunState {
   rerollsLeft: number;
   rerollCount: number;
   phase: Phase;
+  /** The ascended path, once chosen. */
+  path: PathId | null;
 }
 
 export function newRun(seed: number, cls: ClassId): RunState {
-  const s: RunState = { seed, cls, round: 1, levels: {}, offers: [], rerollsLeft: REROLLS_PER_RUN, rerollCount: 0, phase: "choose" };
+  const s: RunState = { seed, cls, round: 1, levels: {}, offers: [], rerollsLeft: REROLLS_PER_RUN, rerollCount: 0, phase: "choose", path: null };
   s.offers = rollOffers(s);
   return s;
 }
 
-/** Skills this class may still pick: its own plus shared ones, below max level. */
+/** Skills this class may still pick, below max level: shared ones, plus its own. Path skills come with
+ * ascension, and then the class's unlearned skills leave the pool; learned ones can still level. */
 export function skillPool(s: RunState): SkillId[] {
-  return (Object.keys(SKILLS) as SkillId[]).filter(
-    (id) => (SKILLS[id].cls === s.cls || SKILLS[id].cls === "any") && (s.levels[id] ?? 0) < MAX_LEVEL,
-  );
+  return (Object.keys(SKILLS) as SkillId[]).filter((id) => {
+    const def = SKILLS[id];
+    if ((s.levels[id] ?? 0) >= MAX_LEVEL) return false;
+    if (def.cls === "any") return true;
+    if (def.cls !== s.cls) return false;
+    if (def.path) return def.path === s.path;
+    return !s.path || (s.levels[id] ?? 0) > 0;
+  });
 }
 
 /** One card per slot: a class Attack skill, a class Defense skill, and a Passive (class passives or shared skills). */
@@ -39,7 +49,9 @@ function rollOffers(s: RunState): SkillId[] {
   const rng = new Rng(hashSeed(s.seed, "offer", s.round, s.rerollCount));
   const pool = skillPool(s);
   const own = (cat: SkillCat) => pool.filter((id) => SKILLS[id].cls === s.cls && SKILLS[id].cat === cat);
-  const slots = [own("attack"), own("defense"), [...own("passive"), ...pool.filter((id) => SKILLS[id].cls === "any")]];
+  // Once ascended, the attack card is a new path skill until every one is learned.
+  const fresh = own("attack").filter((id) => SKILLS[id].path && !s.levels[id]);
+  const slots = [fresh.length ? fresh : own("attack"), own("defense"), [...own("passive"), ...pool.filter((id) => SKILLS[id].cls === "any")]];
   const picks: SkillId[] = [];
   for (const slot of slots) {
     const left = slot.filter((id) => !picks.includes(id));
@@ -65,7 +77,8 @@ export function chooseSkill(s: RunState, id: SkillId): void {
 }
 
 export function currentStats(s: RunState): Stats {
-  return heroStats(CLASSES[s.cls].base, s.levels);
+  const st = heroStats(CLASSES[s.cls].base, s.levels);
+  return s.path ? ascendStats(st) : st;
 }
 
 export function currentMob(s: RunState): { def: MobDef; stats: Stats } {
@@ -73,8 +86,13 @@ export function currentMob(s: RunState): { def: MobDef; stats: Stats } {
 }
 
 export function startBattle(s: RunState): Battle {
-  const mob = currentMob(s);
-  return new Battle(currentStats(s), s.levels, mob.stats, hashSeed(s.seed, "battle", s.round), mob.def.enrage, CLASSES[s.cls].start);
+  return battleAt(s, s.round, hashSeed(s.seed, "battle", s.round));
+}
+
+/** The fight this run's hero would have against a round's mob, for the real fight or a look ahead. */
+export function battleAt(s: RunState, round: number, seed: number): Battle {
+  const mob = mobForRound(round);
+  return new Battle(currentStats(s), s.levels, mob.stats, seed, mob.def.enrage, CLASSES[s.cls].start, s.path);
 }
 
 export function finishBattle(s: RunState, won: boolean): void {
@@ -84,6 +102,17 @@ export function finishBattle(s: RunState, won: boolean): void {
     return;
   }
   s.round++;
+  if (s.round - 1 === ASCEND_ROUND && !s.path && pathsOf(s.cls).length) {
+    s.phase = "ascend";
+    return;
+  }
+  s.phase = "choose";
+  s.offers = rollOffers(s);
+}
+
+export function ascend(s: RunState, path: PathId): void {
+  if (s.phase !== "ascend" || !pathsOf(s.cls).some((p) => p.id === path)) return;
+  s.path = path;
   s.phase = "choose";
   s.offers = rollOffers(s);
 }

@@ -1,5 +1,6 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
-import { AIRBORNE_LABEL, BAND_EDGE, GROUND_SLAM_LABEL, THRUST_LABEL, UPPERCUT_LABEL, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
+import { AIRBORNE_LABEL, BAND_EDGE, GROUND_SLAM_LABEL, THRUST_LABEL, UPPERCUT_LABEL, BAND_NAME, DERIVED, ELEMENT_ICON, type Band, type SkillId } from "../core/skills";
+import { skillLook } from "../core/ascension";
 import { backdrop, PIXEL } from "./backdrop";
 import { drawBurnFx, drawDerivedFx, drawProjectile, drawRootFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
 import { drawMeleeFx, drawStunStars, meleeFxDur, preloadMeleeFx, type MeleeFx } from "./meleeFx";
@@ -254,7 +255,7 @@ export function playBattle(
         const absorbed = e.amount < 0.5;
         scene.floaters.push({ born: scene.now, side: target, text: absorbed ? "absorbed" : `${Math.round(e.amount)}${e.crit ? "!" : ""}`, color: absorbed ? "#6fb6ff" : color, size: absorbed ? 14 : e.crit ? 26 : 18, dx });
         if (flurrySlash) scene.floaters.push({ born: scene.now, side: attacker, text: e.label ?? "", color: "#ffe9a8", size: 17, dx: 0 });
-        else if (e.skill) skillImpact(scene, e.skill, dir, scene.comboAt === e.t);
+        else if (e.skill) skillImpact(scene, e.skill, dir, scene.comboAt === e.t, battle);
         else if (e.label) scene.floaters.push({ born: scene.now, side: attacker, text: e.label, color: "#9fd3ff", size: 15, dx: 0 });
         break;
       }
@@ -548,7 +549,9 @@ function draw(
   for (const side of ["hero", "mob"] as const) {
     const f = side === "hero" ? battle.hero : battle.mob;
     const a = scene.anim[side];
-    const facing = side === "hero" ? 1 : -1;
+    // Mid Whirlwind the Berserker spins: facing flips back and forth.
+    const spinning = side === "hero" && battle.spin !== null && !reduced;
+    const facing = side === "hero" ? (spinning && Math.floor(t * 14) % 2 ? -1 : 1) : -1;
     const melee = f.s.range <= 2;
     // Melee lunges forward then eases back; ranged only rocks slightly.
     const lk = (t - a.lunge) / 0.28;
@@ -585,7 +588,10 @@ function draw(
       zoom: pixelScale(id),
       squash: hurt >= 0 ? 1 - Math.sin(hurt * Math.PI) * 0.08 : 1,
       frozen,
-      aura: enraged ? "rgba(255,60,40,0.35)" : side === "hero" && f.shield > 0 ? "rgba(111,182,255,0.28)" : null,
+      aura: enraged ? "rgba(255,60,40,0.35)" : side === "hero" && f.shield > 0 ? "rgba(111,182,255,0.28)"
+        : side === "hero" && battle.rageMax && (battle.rage >= battle.rageMax / 2 || battle.frenzy > 0) ? "rgba(255,40,20,0.38)" : null,
+      // Stand-in Berserker: the knight washed blood red until the Berserker's own sprite is drawn.
+      tint: side === "hero" && battle.path === "berserker" ? "#b3201a" : null,
       t,
       lift: lift(battle, side),
       // Thrown head over heels away from the hit: back on the way up, levelling out to land.
@@ -599,6 +605,7 @@ function draw(
       ctx.fillText("🧱", x + 42, GROUND - heights[side] - 10 - lift(battle, side));
     }
     drawBars(ctx, x, heights[side], f.hp / f.s.maxHp, side === "hero" ? "#5fe07a" : "#ff7a6b", f.shield / f.s.maxHp, f.stun > 0, f.root > 0, t, lift(battle, side));
+    if (side === "hero" && battle.rageMax) drawRage(ctx, x, heights.hero, battle.rage / battle.rageMax, t, lift(battle, side));
   }
 
   drawShots(ctx, scene, battle, look);
@@ -674,8 +681,8 @@ function drawBands(ctx: CanvasRenderingContext2D, battle: Battle): void {
   ctx.restore();
 }
 
-function skillImpact(scene: Scene, skill: SkillId, dir: 1 | -1, combo: boolean): void {
-  const k = SKILLS[skill];
+function skillImpact(scene: Scene, skill: SkillId, dir: 1 | -1, combo: boolean, battle: Battle): void {
+  const k = skillLook(skill, battle.path);
   scene.floaters.push({ born: scene.now, side: dir === 1 ? "hero" : "mob", text: `${k.icon} ${k.name}`, color: "#ffd34d", size: 24, dx: 0 });
   switch (skill) {
     case "shieldBash":
@@ -877,6 +884,8 @@ interface FighterPose {
   squash: number;
   frozen: boolean;
   aura: string | null;
+  /** Colour washed over the whole figure, if any. */
+  tint?: string | null;
   t: number;
   /** Screen px off the ground, and a tumble in radians, while airborne. */
   lift: number;
@@ -926,6 +935,11 @@ function drawFighter(ctx: CanvasRenderingContext2D, layer: Layer, p: FighterPose
     ctx.imageSmoothingEnabled = false;
   }
   ctx.drawImage(layer.canvas, -Layer.OX, -Layer.OY);
+  if (p.tint) {
+    ctx.globalAlpha = 0.42;
+    ctx.drawImage(layer.tinted(p.tint), -Layer.OX, -Layer.OY);
+    ctx.globalAlpha = 1;
+  }
   if (p.flash > 0) {
     ctx.globalAlpha = p.flash * 0.85;
     ctx.drawImage(layer.tinted("#ffffff"), -Layer.OX, -Layer.OY);
@@ -938,6 +952,20 @@ function drawFighter(ctx: CanvasRenderingContext2D, layer: Layer, p: FighterPose
     ctx.globalAlpha = 1;
   }
   ctx.restore();
+}
+
+/** The Berserker's Rage under the health bar: dark red filling to bright, pulsing once it's half full. */
+function drawRage(ctx: CanvasRenderingContext2D, x: number, size: number, frac: number, t: number, hop: number): void {
+  const w = 64;
+  const top = GROUND - size - 16 - hop + 9;
+  ctx.fillStyle = "#111";
+  ctx.fillRect(x - w / 2 - 1, top - 1, w + 2, 6);
+  const hot = frac >= 0.5;
+  ctx.fillStyle = hot ? `rgb(255,${Math.round(70 + 40 * Math.sin(t * 10))},40)` : "#a3261c";
+  ctx.fillRect(x - w / 2, top, w * Math.max(0, Math.min(1, frac)), 4);
+  // Notch at half: Whirlwind's cost and Twin Fury's threshold.
+  ctx.fillStyle = "rgba(255,255,255,0.6)";
+  ctx.fillRect(x - 0.5, top, 1, 4);
 }
 
 function drawBars(ctx: CanvasRenderingContext2D, x: number, size: number, hpFrac: number, hpColor: string, shieldFrac: number, stunned: boolean, rooted: boolean, t: number, hop: number): void {
@@ -1196,7 +1224,8 @@ function renderHud(hud: HTMLElement, battle: Battle): void {
     .map(({ id, left, total }) => {
       const ready = left <= 0;
       const pct = ready ? 100 : Math.round((1 - left / total) * 100);
-      return `<span class="cd ${ready ? "ready" : ""}" style="--p:${pct}%" title="${SKILLS[id].name}">${SKILLS[id].icon}</span>`;
+      const k = skillLook(id, battle.path);
+      return `<span class="cd ${ready ? "ready" : ""}" style="--p:${pct}%" title="${k.name}">${k.icon}</span>`;
     })
     .join("");
   if (hud.dataset.html !== html) {
