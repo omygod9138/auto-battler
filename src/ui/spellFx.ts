@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam", Eruption: "eruption" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam", Eruption: "eruption", Obsidian: "obsidian" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -39,6 +39,7 @@ const STEAM = ["#f2f4f8", "#c9ced8", "#9aa3b4"];
 const GLASS = ["#ffffff", "#d8f6ff", "#8fdcf0", "#4aa8c8", "#2a6a8a"];
 const LAVA = ["#2a0e08", "#5a1a0c", "#c2380f", "#ff7a1a", "#ffc23a", "#fff1a0"];
 const WATER = ["#e6f6ff", "#8fd0ff", "#4a90d0"];
+const OBSIDIAN = ["#0c0a14", "#1e1a2e", "#3a3354", "#6a5d94", "#c4b4ff", "rgba(30,26,46,0.7)"];
 const SAND = ["#f4e2a8", "#d9b46a", "#b08848", "#7a5a32"];
 
 /** Fills whole art pixels on ctx. */
@@ -66,6 +67,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "lava") lavaBurst(dot, ax, ag, age);
     if (f.kind === "steam") steamBurst(dot, ax, ag, ah, age);
     if (f.kind === "eruption") eruption(dot, ax, ag, ah, age);
+    if (f.kind === "obsidian") obsidian(dot, ax, ag, ah, age);
   }
 }
 
@@ -796,4 +798,72 @@ function eruption(dot: Dot, ax: number, ag: number, ah: number, age: number): vo
     const r = 6 + Math.round(easeOut(k) * 30);
     for (const side of [-1, 1]) for (let i = 0; i < 4; i++) if (hash(i, side, frame) > k * 0.8) dot(ax + side * (r - i * 2), ag - 1 - (i % 2), i ? SAND[2] : LAVA[4], 2, 1);
   }
+}
+
+/** Lava + Water: water floods the pool, it hisses to steam and sets into black volcanic glass that
+ * spikes up round the mob and locks it in (stunned), then shatters into shards. */
+function obsidian(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const dur = SPELL_FX_DUR.obsidian;
+  const hw = 16;
+  const shatter = Math.max(0, (age - (dur - 0.45)) / 0.45);
+  // The pool cools from glowing lava to glossy black, the last cracks fading out.
+  const cool = Math.min(1, age / 0.6);
+  for (let dy = -1; dy <= 3; dy++) {
+    const k = (dy - 1) / 3;
+    const w = Math.round(hw * Math.sqrt(Math.max(0, 1 - k * k)));
+    for (let c = -w; c <= w; c++) {
+      if (hash(c, dy, 71) < shatter) continue;
+      const crack = hash(c >> 1, dy, 72) > 0.82;
+      const hot = hash(c, dy, 73) > cool;
+      const shine = dy === -1 && (c + frame) % 11 === 0;
+      dot(ax + c, ag + dy, hot ? (hash(c, dy, frame) > 0.5 ? LAVA[3] : LAVA[4]) : crack && cool < 1 ? LAVA[2] : shine ? OBSIDIAN[4] : dy === -1 ? OBSIDIAN[2] : OBSIDIAN[1]);
+    }
+  }
+  // A sheet of water crashes down onto it.
+  if (age < 0.3) {
+    for (let i = 0; i < 16; i++) {
+      const x = ax - hw + Math.round(hash(i, 1, 74) * hw * 2);
+      const y = ag - 30 + Math.round((age / 0.3) * 30) - Math.round(hash(i, 2, 74) * 8);
+      if (y < ag - 1) dot(x, y, i % 3 ? WATER[1] : WATER[0], 1, 2);
+    }
+  }
+  // Steam hisses off as it sets.
+  for (let i = 0; i < 10; i++) {
+    const t = age - 0.15 - hash(i, 3, 75) * 0.3;
+    if (t < 0 || t > 0.8) continue;
+    const x = ax - hw + Math.round(hash(i, 4, 75) * hw * 2);
+    puff(dot, x, ag - 3 - Math.round(t * 40), 2 + Math.round(t * 5), t / 0.8, frame, i * 11);
+  }
+  // Glass spikes shoot up round the mob: tall at the sides, lower in front so its face shows through.
+  const rise = easeOut(Math.min(1, Math.max(0, (age - 0.2) / 0.25)));
+  if (rise <= 0) return;
+  const spikes = [[-10, 0.75, 3], [-7, 0.95, 3], [-3, 0.5, 3], [1, 0.4, 3], [5, 0.85, 3], [9, 0.65, 3], [-12, 0.4, 2], [12, 0.35, 2]];
+  spikes.forEach(([off, tall, half], i) => {
+    const h = Math.round(ah * tall * rise);
+    const lean = off * 0.08;
+    for (let y = 0; y < h; y++) {
+      const tip = Math.max(0, (y - h * 0.55) / (h * 0.45));
+      const w = Math.max(0, Math.round(half * (1 - tip)));
+      for (let c = -w; c <= w; c++) {
+        let gx = ax + off + c + Math.round(lean * y * 0.3);
+        let gy = ag - 1 - y;
+        if (shatter > 0) {
+          // Chunks fly out and fall.
+          const f = shatter - hash(i, y >> 2, 76) * 0.3;
+          if (f > 0) {
+            gx += Math.round((off >= 0 ? 1 : -1) * f * (20 + hash(i, y >> 2, 77) * 30));
+            gy += Math.round(-f * 30 + f * f * 160);
+            if (gy >= ag) continue;
+          }
+        }
+        // Lit left face, dark right face, see-through middle; a glint slides up each spike.
+        const glint = Math.abs(y - ((frame * 2 + i * 7) % (h + 12))) < 1;
+        const color = glint ? OBSIDIAN[4] : c === -w ? OBSIDIAN[3] : c === w ? OBSIDIAN[0] : c < 0 ? OBSIDIAN[2] : OBSIDIAN[5];
+        dot(gx, gy, color);
+      }
+    }
+  });
+  // The prison's first moment: a flash of sparks where the spikes snap shut.
+  if (age > 0.4 && age < 0.55) for (let i = 0; i < 6; i++) dot(ax - 10 + Math.round(hash(i, frame, 78) * 20), ag - Math.round(ah * (0.3 + hash(i, 5, 78) * 0.5)), OBSIDIAN[4]);
 }
