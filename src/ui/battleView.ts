@@ -20,10 +20,15 @@ const CHAR_SCALE = 1.35;
 const STANDOFF = 16;
 /** Left face of the far wall: just behind a mob standing at the arena's end. */
 const WALL_X = W - PAD_R + STANDOFF + 30;
-/** Real seconds the whole scene freezes when a combo lands. */
-const COMBO_PAUSE = 1.2;
-/** No new freeze until this many real seconds after the last one ended, so a combo chain pauses once. */
-const COMBO_PAUSE_GAP = 4;
+/** Real seconds the whole scene freezes when a combo lands: a quick beat, not a stop. */
+const COMBO_PAUSE = 0.45;
+/** How far the camera pushes in on a combo. */
+const COMBO_ZOOM = 1.3;
+/** Real seconds the camera takes to push in, and to ease back out once the hit lands. */
+const ZOOM_IN = 0.12;
+const ZOOM_OUT = 0.4;
+/** Real seconds after a combo freeze that time ramps from slow motion back to full speed. */
+const SLOWMO = 0.35;
 /** Seconds a skill clip takes to play from the moment its hit lands. */
 const SKILL_ANIM = 0.5;
 const fx = (battle: Battle, side: Side) => px(side === "hero" ? battle.hero.x : battle.mob.x) + (side === "hero" ? -STANDOFF : STANDOFF);
@@ -116,6 +121,12 @@ class Scene {
   wallHit = -9;
   /** Battle time of the last combo, so the hit that lands with it can play its combo look. */
   comboAt = -1;
+  /** Camera push-in on a combo, centred between the fighters (real time). */
+  cam: { born: number; x: number; y: number } | null = null;
+  /** Real time a combo hit landed, for the zoom punch. */
+  punch = -9;
+  /** Full-screen flashes in real time, so they still fade during a freeze. */
+  flashes: { born: number; dur: number; color: string }[] = [];
   /** A large centred callout, for combos. */
   banner: { text: string; born: number } | null = null;
   anim: Record<Side, FighterAnim> = {
@@ -250,11 +261,18 @@ export function playBattle(
         break;
       case "status":
         if (e.label.startsWith("Combo")) scene.comboAt = e.t;
+        if (e.label.startsWith("Combo")) {
+          // The combo hit lands: a bright flash, a kick of the camera and a shake.
+          scene.flashes.push({ born: scene.real, dur: 0.2, color: "255,236,170" });
+          scene.punch = scene.real;
+          scene.shake = Math.max(scene.shake, 10);
+        }
         if (e.reaction || e.label.startsWith("Combo")) {
           // The pause before the hit already showed this banner; don't pop it again.
           if (scene.banner?.text === e.label && scene.real - scene.banner.born < COMBO_PAUSE + 0.6) break;
           scene.banner = { text: e.label, born: scene.real };
-          scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir });
+          // Combos flash on the camera punch above; reactions keep their warm flash.
+          if (e.reaction) scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir });
           const kind = e.reaction && REACTION_FX[e.reaction];
           if (kind) {
             scene.spells.push({ kind, born: scene.now });
@@ -293,19 +311,22 @@ export function playBattle(
       if (scene.freeze <= 0) scene.freezeEnded = scene.real;
     }
     else {
-      scene.now += dt;
-      acc += dt * speed();
+      // Coming out of a combo freeze, time eases from slow motion back to full speed.
+      const slow = reduced ? 1 : Math.min(1, 0.25 + 0.75 * ((scene.real - scene.freezeEnded) / SLOWMO));
+      scene.now += dt * slow;
+      acc += dt * slow * speed();
     }
     while (acc >= TICK && !battle.outcome) {
       // Every combo pauses at the end of its wind-up, right before the hit: momentum gathered, swing to come.
-      // Only combos pause, and only once per chain.
+      // Every combo pauses, zooms in on the fighters and flashes.
       const combo = battle.comboNext();
-      if (combo && scene.frozeAt !== battle.time && scene.real - scene.freezeEnded > COMBO_PAUSE_GAP) {
+      if (combo && scene.frozeAt !== battle.time) {
         scene.freeze = COMBO_PAUSE;
         scene.frozeAt = battle.time;
         scene.shake = 0;
         scene.banner = { text: combo, born: scene.real };
-        scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir: 1 });
+        scene.cam = { born: scene.real, x: (sideX("hero") + sideX("mob")) / 2, y: GROUND - Math.max(heights.hero, heights.mob) * 0.55 };
+        scene.flashes.push({ born: scene.real, dur: 0.14, color: "255,255,255" });
         acc = 0;
         break;
       }
@@ -448,6 +469,13 @@ function draw(
 ): void {
   const t = scene.now;
   ctx.save();
+  const cam = reduced ? null : camera(scene);
+  if (cam) {
+    ctx.translate(cam.x, cam.y);
+    ctx.scale(cam.z, cam.z);
+    ctx.translate(-cam.x, -cam.y);
+  }
+  ctx.save();
   if (scene.shake > 0) ctx.translate(rand(-scene.shake, scene.shake), rand(-scene.shake, scene.shake) * 0.6);
   drawBackground(ctx, scene, t, look.mobBoss);
 
@@ -531,6 +559,8 @@ function draw(
     ctx.globalAlpha = 1;
   }
   drawFloaters(ctx, scene, battle, heights);
+  ctx.restore();
+  drawFlashes(ctx, scene);
   drawBanner(ctx, scene);
 
   ctx.fillStyle = "rgba(255,255,255,0.75)";
@@ -655,13 +685,43 @@ function drawElements(ctx: CanvasRenderingContext2D, battle: Battle, t: number, 
   }
 }
 
+/** The combo camera: pushes in fast while frozen, punches on the hit, then eases back out. */
+function camera(scene: Scene): { x: number; y: number; z: number } | null {
+  const c = scene.cam;
+  if (!c) return null;
+  let k: number;
+  if (scene.freeze > 0) k = easeOut(Math.min(1, (scene.real - c.born) / ZOOM_IN));
+  else {
+    const out = (scene.real - Math.max(scene.freezeEnded, c.born)) / ZOOM_OUT;
+    if (out >= 1) {
+      scene.cam = null;
+      return null;
+    }
+    k = 1 - out * out * (3 - 2 * out);
+  }
+  const pk = (scene.real - scene.punch) / 0.2;
+  const punch = pk >= 0 && pk < 1 ? 0.06 * (1 - pk) : 0;
+  return { x: c.x, y: c.y, z: 1 + (COMBO_ZOOM - 1) * k + punch };
+}
+
+function drawFlashes(ctx: CanvasRenderingContext2D, scene: Scene): void {
+  scene.flashes = scene.flashes.filter((f) => scene.real - f.born < f.dur);
+  for (const f of scene.flashes) {
+    ctx.fillStyle = `rgba(${f.color},${0.55 * (1 - (scene.real - f.born) / f.dur)})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
 function drawBanner(ctx: CanvasRenderingContext2D, scene: Scene): void {
   const b = scene.banner;
   if (!b) return;
   const age = scene.real - b.born;
   if (scene.freeze > 0) {
-    // Dim the frozen frame so the banner reads as a beat.
-    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    // Darken the edges of the frozen frame so the eye goes to the fighters.
+    const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.6);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, "rgba(0,0,0,0.45)");
+    ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   }
   if (age > COMBO_PAUSE + 0.6) {
