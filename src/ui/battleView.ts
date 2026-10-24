@@ -2,7 +2,7 @@ import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } fr
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
 import { drawBurnFx, drawDerivedFx, drawProjectile, drawRootFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
-import { drawMeleeFx, MELEE_FX_DUR, type MeleeFx } from "./meleeFx";
+import { drawMeleeFx, meleeFxDur, preloadMeleeFx, type MeleeFx } from "./meleeFx";
 import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
@@ -156,6 +156,7 @@ export function playBattle(
 
   const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   const scene = new Scene();
+  preloadMeleeFx();
   const heights: Record<Side, number> = { hero: height(look.hero), mob: height(look.mob) };
   const layers = new LayerCache();
   let seen = 0;
@@ -188,9 +189,10 @@ export function playBattle(
           scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: wound ? "strike" : "full", simAt: e.t, simEnd: e.t };
         }
         if (e.fx === "slash" && !e.skill && target === "mob") {
-          // A plain sword swing: a pixel steel crescent across the mob.
+          // A plain sword swing: a steel crescent across the mob, then a hit flash where the blade meets it.
           scene.anim[attacker].lunge = scene.now;
           scene.melee.push({ kind: "slash", born: scene.now, big: e.crit });
+          scene.melee.push({ kind: "hit", born: scene.now + 0.06, big: e.crit, dx: -12 });
         } else if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
           scene.anim[attacker].lunge = scene.now;
           scene.add({ kind: "slash", dur: 0.22, x: x - dir * 10, y, color: e.fx === "claw" ? "#ff9f9f" : "#ffffff", size: big ? 46 : 34, dir });
@@ -403,7 +405,7 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
   scene.floaters = scene.floaters.filter((f) => scene.now - f.born < 1.1);
   scene.shots = scene.shots.filter((s) => scene.now - s.born < (s.fx === "meteor" ? 0.32 : 0.18));
   scene.spells = scene.spells.filter((s) => scene.now - s.born < SPELL_FX_DUR[s.kind]);
-  scene.melee = scene.melee.filter((m) => scene.now - m.born < MELEE_FX_DUR[m.kind]);
+  scene.melee = scene.melee.filter((m) => scene.now - m.born < meleeFxDur(m.kind));
   for (const f of scene.ambient) {
     f.x += f.vx * dt + Math.sin(scene.now + f.y * 0.05) * 0.2;
     f.y += f.vy * dt;
