@@ -190,7 +190,8 @@ export function playBattle(
           scene.burst(x, y, big ? 16 : 8, target === "mob" ? "#ffd9a0" : "#ff5a4a", 180);
         } else {
           scene.anim[attacker].lunge = scene.now;
-          scene.shots.push({ born: scene.now, from: attacker, fx: e.fx });
+          // Eruption bursts up from the ground, so it skips the falling meteor.
+          if (!(e.fx === "meteor" && e.label && REACTION_FX[e.label])) scene.shots.push({ born: scene.now, from: attacker, fx: e.fx });
           // Reactions with pixel art draw their own hit.
           if (!(e.label && REACTION_FX[e.label])) impact(scene, e.fx, x, y, big);
         }

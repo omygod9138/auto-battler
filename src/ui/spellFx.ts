@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam", Eruption: "eruption" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -65,6 +65,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "glass") glass(dot, ax, ag, ah, age);
     if (f.kind === "lava") lavaBurst(dot, ax, ag, age);
     if (f.kind === "steam") steamBurst(dot, ax, ag, ah, age);
+    if (f.kind === "eruption") eruption(dot, ax, ag, ah, age);
   }
 }
 
@@ -710,5 +711,89 @@ function steamVeil(dot: Dot, ax: number, ag: number, ah: number, t: number): voi
     const x = ax + Math.round((hash(i, 7, Math.floor(t * 0.6 + hash(i, 6, 56))) - 0.5) * 20) + Math.round(Math.sin(t * 2 + i) * 2);
     const y = head + 6 - Math.round(p * 18);
     puff(dot, x, y, 3 + Math.round(p * 2), 0.2 + p * 0.8, frame, i * 13);
+  }
+}
+
+/** Lava + Air: wind whips the pool into a volcano. A cone heaves up under the mob, a magma column blasts through it,
+ * an ash cloud mushrooms overhead and burning rocks rain back down. */
+function eruption(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  // Low enough that the ash cloud stays on screen.
+  const top = Math.max(22, ag - ah - 12);
+  // The ground swells into a glowing cone, then slumps back.
+  const swell = age < 0.15 ? age / 0.15 : Math.max(0, 1 - (age - 1.0) / 0.5);
+  const coneH = Math.round(swell * 10);
+  for (let y = 0; y < coneH; y++) {
+    const w = Math.round((coneH - y) * 1.3) + 3;
+    for (let c = -w; c <= w; c++) {
+      if (Math.abs(c) === w && hash(c, y, 60) > 0.5) continue;
+      // Dark rock, lit from the right, with lava running down the vent's sides.
+      const vent = Math.abs(c) < 2 + (y > coneH - 3 ? 1 : 0);
+      const rill = Math.abs(Math.abs(c) - (coneH - y) * 0.6 - 1) < 0.6 && hash(c > 0 ? 1 : 0, 0, 61) > 0.2;
+      const rock = c > w * 0.3 ? SMOKE[1] : SMOKE[0];
+      dot(ax + c, ag - y, vent ? LAVA[frame % 2 ? 5 : 4] : rill ? LAVA[3] : hash(c, y, 61) > 0.85 ? LAVA[1] : rock);
+    }
+  }
+  // The magma column: thick and bright at first, thinning to a spout.
+  if (age > 0.08 && age < 0.9) {
+    const k = (age - 0.08) / 0.82;
+    const rise = Math.round(easeOut(Math.min(1, k * 4)) * (ag - top));
+    const hw = Math.max(1, Math.round(6 * (1 - k * 0.85)));
+    for (let y = 0; y < rise; y++) {
+      const wob = Math.round(Math.sin(y * 0.35 + frame) * 1);
+      for (let c = -hw; c <= hw; c++) {
+        if (Math.abs(c) === hw && hash(c, y, frame) > 0.6) continue;
+        const core = Math.abs(c) < hw * 0.5;
+        dot(ax + c + wob, ag - coneH - y, core ? (y > rise - 3 ? LAVA[5] : LAVA[4]) : LAVA[3]);
+      }
+    }
+  }
+  // Ash cloud mushrooms out at the top, then drifts with the wind.
+  if (age > 0.2) {
+    const k = Math.min(1, (age - 0.2) / 0.5);
+    const fade = Math.max(0, (age - 1.0) / 0.6);
+    const drift = Math.round(Math.max(0, age - 0.6) * 14);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI;
+      const out = easeOut(k) * (8 + hash(i, 1, 62) * 8);
+      const x = ax + drift + Math.round(Math.cos(a) * out * 1.6);
+      const y = top - Math.round(Math.sin(a) * out * 0.7) + 2;
+      const r = 3 + Math.round(k * 4);
+      disc(dot, x, y, r, (d, px, py) => (hash(px + i * 5, py, frame >> 1) < fade * 0.9 + d * d * 0.3 ? null : d < 0.4 && py < 0 ? SMOKE[1] : d > 0.7 && py > 0 ? LAVA[1] : SMOKE[0]));
+    }
+    // Glow from the vent lights the cloud's belly.
+    if (age < 0.9) for (let c = -6; c <= 6; c += 2) if (hash(c, frame, 63) > 0.4) dot(ax + drift + c, top + 4, LAVA[3]);
+  }
+  // Burning rocks fly out in arcs and crash back down.
+  const t = age - 0.12;
+  if (t > 0) {
+    for (let i = 0; i < 12; i++) {
+      const side = i % 2 ? 1 : -1;
+      const vx = side * (10 + hash(i, 2, 64) * 34);
+      const vy = 90 + hash(i, 3, 65) * 70;
+      const lt = t - hash(i, 4, 66) * 0.25;
+      if (lt < 0) continue;
+      const x = ax + Math.round(vx * lt);
+      const y = ag - 6 - Math.round(vy * lt - 140 * lt * lt);
+      if (y >= ag) {
+        // A splash of embers where it lands.
+        if (y < ag + 18) {
+          dot(x - 2, ag - 1, LAVA[3], 5, 1);
+          dot(x, ag - 2, LAVA[5]);
+        }
+        continue;
+      }
+      const big = i % 3 === 0;
+      const pt = Math.max(0, lt - 0.06);
+      dot(ax + Math.round(vx * pt), ag - 6 - Math.round(vy * pt - 140 * pt * pt), SMOKE[1], 2, 2);
+      dot(x, y, LAVA[1], big ? 4 : 3, big ? 4 : 3);
+      dot(x + 1, y + 1, LAVA[frame % 2 ? 4 : 3], big ? 2 : 1, big ? 2 : 1);
+    }
+  }
+  // A shock ring of dust and sparks along the ground.
+  if (age < 0.5) {
+    const k = age / 0.5;
+    const r = 6 + Math.round(easeOut(k) * 30);
+    for (const side of [-1, 1]) for (let i = 0; i < 4; i++) if (hash(i, side, frame) > k * 0.8) dot(ax + side * (r - i * 2), ag - 1 - (i % 2), i ? SAND[2] : LAVA[4], 2, 1);
   }
 }
