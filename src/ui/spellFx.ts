@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -35,7 +35,7 @@ const BOLT = ["#ffffff", "#fff59a", "#9fd8ff"];
 const MUD = ["#2a1c12", "#4a3322", "#6e4c2c", "#94703f", "#d8c09a", "#7f8c8a"];
 const PLASMA = ["#ffffff", "#ffd6ff", "#ff7ae0", "#c23cff", "#5a1a9a"];
 const CLAY = ["#4a2214", "#7e3e22", "#b0603a", "#d98c5a", "#f2be92"];
-const STEAM = ["#f2f4f8", "#c9ced8"];
+const STEAM = ["#f2f4f8", "#c9ced8", "#9aa3b4"];
 const GLASS = ["#ffffff", "#d8f6ff", "#8fdcf0", "#4aa8c8", "#2a6a8a"];
 const LAVA = ["#2a0e08", "#5a1a0c", "#c2380f", "#ff7a1a", "#ffc23a", "#fff1a0"];
 const WATER = ["#e6f6ff", "#8fd0ff", "#4a90d0"];
@@ -64,6 +64,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "clay") clay(dot, ax, ag, ah, age);
     if (f.kind === "glass") glass(dot, ax, ag, ah, age);
     if (f.kind === "lava") lavaBurst(dot, ax, ag, age);
+    if (f.kind === "steam") steamBurst(dot, ax, ag, ah, age);
   }
 }
 
@@ -78,6 +79,12 @@ export function drawZoneFx(ctx: CanvasRenderingContext2D, kind: string, x0: numb
 
 /** A lingering state left on the mob (not a ground zone), drawn until it runs out. Returns false if it has no pixel art yet. */
 export function drawDerivedFx(ctx: CanvasRenderingContext2D, kind: string, x: number, ground: number, h: number, t: number, fade: number): boolean {
+  if (kind === "steam") {
+    ctx.globalAlpha = fade;
+    steamVeil(dotter(ctx), Math.round(x / P), Math.round(ground / P), Math.round(h / P), t);
+    ctx.globalAlpha = 1;
+    return true;
+  }
   if (kind === "sandstorm") {
     ctx.globalAlpha = fade;
     sandSwirl(dotter(ctx), Math.round(x / P), Math.round(ground / P), Math.round(h / P), t);
@@ -648,5 +655,60 @@ function lavaPool(dot: Dot, cx: number, hw: number, ag: number, t: number): void
       dot(bx + 2 + Math.round(f * 2), ag - 5 - Math.round(f * 5), LAVA[5]);
       dot(bx, ag - 6 - Math.round(f * 6), LAVA[4]);
     }
+  }
+}
+
+/** A soft dithered puff that thins out as k goes 0..1. */
+function puff(dot: Dot, x: number, y: number, r: number, k: number, frame: number, seed: number): void {
+  disc(dot, x, y, r, (d, px, py) => (hash(px + seed, py, frame >> 1) < k * k * 0.9 + d * d * 0.35 ? null : d < 0.45 ? STEAM[0] : d < 0.8 ? STEAM[1] : STEAM[2]));
+}
+
+/** Fire + Water: the water flashes to steam with a hiss, a scalding plume bursting out and up from the mob. */
+function steamBurst(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const cy = ag - Math.round(ah * 0.55);
+  // Jets shoot out sideways first.
+  if (age < 0.35) {
+    const k = age / 0.35;
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const len = Math.round(k * (16 + i * 4));
+        const y = cy - 4 + i * 4;
+        for (let c = 4; c < len; c += 2) if (hash(c, i * side, frame) > k * 0.6) dot(ax + side * c, y + Math.round(Math.sin(c * 0.4) * 1), c > len - 4 ? STEAM[0] : STEAM[1], 2, 1);
+      }
+    }
+  }
+  // Puffs billow out and up, growing as they thin.
+  for (let i = 0; i < 18; i++) {
+    const t = age - hash(i, 1, 51) * 0.25;
+    if (t < 0) continue;
+    const k = t / 0.8;
+    if (k >= 1) continue;
+    const a = hash(i, 2, 52) * 6.28;
+    const out = 4 + easeOut(Math.min(1, k * 1.5)) * (10 + hash(i, 3, 53) * 10);
+    const x = ax + Math.round(Math.cos(a) * out);
+    const y = cy + Math.round(Math.sin(a) * out * 0.6) - Math.round(t * 30);
+    puff(dot, x, y, 3 + Math.round(k * 5), k, frame, i * 7);
+  }
+  // Hot droplets spit out.
+  for (let i = 0; i < 8; i++) {
+    const t = age - 0.05;
+    if (t < 0 || t > 0.5) break;
+    const side = i % 2 ? 1 : -1;
+    const x = ax + Math.round(side * (6 + t * (30 + hash(i, 4, 54) * 30)));
+    const y = cy - Math.round(t * (40 + hash(i, 5, 55) * 30) - 120 * t * t);
+    dot(x, y, i % 3 ? WATER[1] : WATER[0]);
+  }
+}
+
+/** The steam left hanging round the mob's head, half-blinding it: thin wisps that drift up and fade. */
+function steamVeil(dot: Dot, ax: number, ag: number, ah: number, t: number): void {
+  const frame = Math.floor(t * FPS);
+  const head = ag - ah + 4;
+  for (let i = 0; i < 7; i++) {
+    const p = (t * 0.6 + hash(i, 6, 56)) % 1;
+    const x = ax + Math.round((hash(i, 7, Math.floor(t * 0.6 + hash(i, 6, 56))) - 0.5) * 20) + Math.round(Math.sin(t * 2 + i) * 2);
+    const y = head + 6 - Math.round(p * 18);
+    puff(dot, x, y, 3 + Math.round(p * 2), 0.2 + p * 0.8, frame, i * 13);
   }
 }
