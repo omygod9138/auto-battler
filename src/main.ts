@@ -1,8 +1,10 @@
 import type { Battle } from "./core/battle";
+import { ASCEND, ASCEND_ROUND, PATHS, pathsOf, skillLook } from "./core/ascension";
 import { FallbackLeaderboard, LocalLeaderboard, SupabaseLeaderboard, TOP_N, cleanName, type Leaderboard, type ScoreEntry } from "./core/leaderboard";
 import { MAX_LEVEL, SKILLS, type SkillCat, type SkillId, type SkillKind } from "./core/skills";
-import { CLASSES, type ClassId, type Stats } from "./core/stats";
+import { CLASSES, type ClassId, type PathId, type Stats } from "./core/stats";
 import {
+  ascend,
   chooseSkill,
   currentMob,
   currentStats,
@@ -87,6 +89,7 @@ function render(): void {
   if (!run) return screen === "title" ? renderTitle() : renderClasses();
   if (run.phase === "choose") return renderChoose(run);
   if (run.phase === "battle") return renderBattle(run);
+  if (run.phase === "ascend") return renderAscend(run);
   return renderOver(run);
 }
 
@@ -211,9 +214,14 @@ function statLine(s: Stats): string {
   return `❤️ ${Math.round(s.maxHp)} · ⚔️ ${s.dmg.toFixed(0)} · ${(1 / s.interval).toFixed(2)}/s · 📏 ${s.range}`;
 }
 
+/** The hero's title: the class, or its ascended path. */
+function heroName(s: RunState): { icon: string; name: string } {
+  return s.path ? PATHS[s.path] : CLASSES[s.cls];
+}
+
 function header(s: RunState): string {
-  const c = CLASSES[s.cls];
-  return `<header class="hud">
+  const c = heroName(s);
+  return `<header class="hud ${s.path ? "ascended" : ""}">
     <span>${c.icon} <b>${c.name}</b></span>
     <span>Round <b>${s.round}</b></span>
     <span>Wins <b>${s.round - 1}</b></span>
@@ -235,8 +243,10 @@ function heroPanel(s: RunState): string {
   if (st.lifesteal) rows.push(["🧛 Lifesteal", `${Math.round(st.lifesteal * 100)}%`]);
   if (st.regen) rows.push(["🌿 Regen", `${(st.regen * 100).toFixed(1)}%/s`]);
   if (st.spellPower !== 1) rows.push(["✨ Spell power", `×${st.spellPower.toFixed(2)}`]);
-  const chip = ([id, lv]: [SkillId, number]) =>
-    `<span class="chip" title="${SKILLS[id].desc(lv)}">${SKILLS[id].icon} ${SKILLS[id].name} <b>${lv}</b></span>`;
+  const chip = ([id, lv]: [SkillId, number]) => {
+    const k = skillLook(id, s.path);
+    return `<span class="chip" title="${k.desc(lv)}">${k.icon} ${k.name} <b>${lv}</b></span>`;
+  };
   const learned = Object.entries(s.levels) as [SkillId, number][];
   // Class skills grouped by category, shared skills last.
   const groups: [string, [SkillId, number][]][] = [
@@ -248,7 +258,7 @@ function heroPanel(s: RunState): string {
     .map(([name, list]) => `<div class="skill-group"><small class="tag">${name}</small><div class="chips">${list.map(chip).join("")}</div></div>`)
     .join("");
   return `<section class="panel hero">
-    <div class="hero-head"><img class="portrait small" src="${portrait(s.cls)}" alt="" width="56" height="56"><h3>Your ${CLASSES[s.cls].name}</h3></div>
+    <div class="hero-head"><img class="portrait small" src="${portrait(s.cls)}" alt="" width="56" height="56"><h3>Your ${heroName(s).name}</h3></div>
     <dl class="stats">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
     <h3>Skills</h3>
     ${owned || "<span class='muted'>None yet.</span>"}
@@ -270,13 +280,15 @@ function renderChoose(s: RunState): void {
   const cards = s.offers
     .map((id) => {
       const k = SKILLS[id];
+      const look = skillLook(id, s.path);
       const lv = s.levels[id] ?? 0;
-      return `<button class="card skill ${k.cls === "any" ? "shared" : ""}" data-action="pick" data-id="${id}">
-        <div class="big">${k.icon}</div>
-        <b>${k.name}</b>
-        <small class="tag ${k.kind}">${k.cat ? `<span class="cat">${CAT_LABEL[k.cat]}</span> · ${KIND_LABEL[k.kind]} · <span class="cls">${CLASSES[k.cls as ClassId].name}</span>` : `${KIND_LABEL[k.kind]} · Shared`}</small>
+      const owner = k.path ? PATHS[k.path].name : CLASSES[k.cls as ClassId]?.name;
+      return `<button class="card skill ${k.cls === "any" ? "shared" : ""} ${k.path ? "path" : ""}" data-action="pick" data-id="${id}">
+        <div class="big">${look.icon}</div>
+        <b>${look.name}</b>
+        <small class="tag ${k.kind}">${k.cat ? `<span class="cat">${CAT_LABEL[k.cat]}</span> · ${KIND_LABEL[k.kind]} · <span class="cls">${owner}</span>` : `${KIND_LABEL[k.kind]} · Shared`}</small>
         <span class="lv">${lv ? `Lv ${lv} → ${lv + 1}` : "New"}${lv + 1 === MAX_LEVEL ? " (max)" : ""}</span>
-        <span>${k.desc(lv + 1)}</span>
+        <span>${look.desc(lv + 1)}</span>
       </button>`;
     })
     .join("");
@@ -294,13 +306,42 @@ function renderChoose(s: RunState): void {
     </main>`;
 }
 
+/** Paths still to come, shown locked beside the playable ones. */
+const COMING_SOON: Partial<Record<ClassId, { name: string; icon: string; role: string }[]>> = {
+  warrior: [{ name: "Paladin", icon: "🛡️", role: "Defence" }],
+};
+
+/** Round 20's boss is down: a pillar of light and the choice of path, for the rest of the run. */
+function renderAscend(s: RunState): void {
+  const cards = pathsOf(s.cls)
+    .map((p) => `<button class="card clan path-card ${p.id}" data-action="ascend" data-id="${p.id}">
+        <img class="portrait" src="${portrait(s.cls)}" alt="" width="96" height="96">
+        <b>${p.icon} ${p.name}</b><small class="tag">${p.role}</small>
+        <span>${p.desc}</span>
+        <span class="muted">New skills join your picks; ${CLASSES[s.cls].name} skills you haven't learned leave them.</span>
+      </button>`)
+    .concat((COMING_SOON[s.cls] ?? []).map((p) => `<div class="card clan path-card locked" aria-disabled="true">
+        <img class="portrait" src="${portrait(s.cls)}" alt="" width="96" height="96">
+        <b>${p.icon} ${p.name}</b><small class="tag">${p.role}</small>
+        <span class="muted">Coming soon.</span>
+      </div>`))
+    .join("");
+  app.innerHTML = `${header(s)}
+    <div class="ascend-screen">
+      <div class="pillar" aria-hidden="true"></div>
+      <h1>✨ Ascension</h1>
+      <p class="sub">You beat round ${ASCEND_ROUND}. Your ${CLASSES[s.cls].name} ascends: ×${ASCEND.dmg} damage, ×${ASCEND.hp} HP, and your hits stop mobs regenerating. Choose a path for the rest of this run.</p>
+      <div class="cards three">${cards}</div>
+    </div>`;
+}
+
 function renderBattle(s: RunState): void {
   if (app.querySelector("canvas.arena")) return;
   const { def } = currentMob(s);
   battle = startBattle(s);
   app.innerHTML = `${header(s)}
     <div class="battle-screen">
-      <div class="vs"><span class="you">${CLASSES[s.cls].icon} You</span> vs <span class="foe">${def.name} ${def.icon}</span></div>
+      <div class="vs"><span class="you">${heroName(s).icon} You</span> vs <span class="foe">${def.name} ${def.icon}</span></div>
       <canvas class="arena" width="880" height="320"></canvas>
       <div class="battle-bar">
         <div class="cds" id="cds"></div>
@@ -374,7 +415,7 @@ function renderOver(s: RunState): void {
   app.innerHTML = `${header(s)}
     <div class="over panel">
       <h1>💀 Game over</h1>
-      <p>${CLASSES[s.cls].name} fell to the <b>${def.icon} ${def.name}</b> in round ${s.round} after <b>${wins}</b> win${wins === 1 ? "" : "s"}.</p>
+      <p>${heroName(s).name} fell to the <b>${def.icon} ${def.name}</b> in round ${s.round} after <b>${wins}</b> win${wins === 1 ? "" : "s"}.</p>
       ${
         lastScore
           ? `<h3>${lastScore.rank ? `🏆 #${lastScore.rank} on the ${leaderboard.scope === "global" ? "global " : ""}${CLASSES[s.cls].name} leaderboard!` : `${CLASSES[s.cls].name} leaderboard`}</h3>
@@ -410,6 +451,9 @@ app.addEventListener("click", (e) => {
       break;
     case "class":
       run = newRun(seed(), btn.dataset.id as ClassId);
+      break;
+    case "ascend":
+      ascend(run!, btn.dataset.id as PathId);
       break;
     case "pick":
       chooseSkill(run!, btn.dataset.id as SkillId);
@@ -459,5 +503,14 @@ stamp.title = "Build: commit and build time";
 document.body.append(stamp);
 
 // Missing art just means the procedural characters are used.
-if (new URLSearchParams(location.search).has("sandbox")) loadSprites().finally(() => startSandbox(app));
+const params = new URLSearchParams(location.search);
+// Dev shortcut (?ascend): a Warrior run that has just beaten round 20, at the path choice.
+if (import.meta.env.DEV && params.has("ascend")) {
+  run = newRun(Math.floor(Math.random() * 2 ** 31), "warrior");
+  run.levels = { charge: 2, shieldBash: 2, heavyStrike: 1, spartanKick: 1, ironSkin: 2, might: 2, vitality: 2, fortify: 2, bloodlust: 2, thorns: 1 };
+  run.round = ASCEND_ROUND;
+  run.phase = "battle";
+  finishBattle(run, true);
+}
+if (params.has("sandbox")) loadSprites().finally(() => startSandbox(app));
 else loadSprites().finally(render);

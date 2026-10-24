@@ -298,3 +298,23 @@ h2.loss { color: var(--bad); }
   .notice { padding: 10px 14px; gap: 6px; border-width: 6px; }
   .parchment .board th, .parchment .board td { padding: 2px 6px; font-size: 0.8rem; }
 }
+
+/* Ascension: a pillar of light behind the path choice. */
+.ascend-screen { position: relative; max-width: 820px; margin: 30px auto; text-align: center; overflow: hidden; padding: 10px 6px 20px; }
+.ascend-screen h1 { color: #ffd34d; text-shadow: 0 0 18px rgba(255, 211, 77, 0.7); position: relative; }
+.ascend-screen .sub { color: var(--muted); position: relative; }
+.ascend-screen .cards { position: relative; }
+.ascend-screen .pillar {
+  position: absolute; left: 50%; top: -40px; width: 160px; height: 120%; transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, rgba(255, 230, 150, 0.35), rgba(255, 250, 220, 0.6), rgba(255, 230, 150, 0.35), transparent);
+  filter: blur(6px); animation: pillar 2.4s ease-in-out infinite; pointer-events: none;
+}
+@keyframes pillar { 0%, 100% { opacity: 0.55; width: 140px; } 50% { opacity: 1; width: 190px; } }
+@media (prefers-reduced-motion: reduce) { .ascend-screen .pillar { animation: none; } }
+.path-card { border: 2px solid #ffd34d; box-shadow: 0 0 16px rgba(255, 211, 77, 0.35); }
+.path-card.berserker { border-color: #e0452f; box-shadow: 0 0 18px rgba(224, 69, 47, 0.45); }
+.path-card.berserker .portrait { filter: sepia(1) saturate(4) hue-rotate(-30deg) drop-shadow(0 3px 4px rgba(0, 0, 0, 0.45)); }
+.path-card.locked { opacity: 0.45; border-color: var(--muted); box-shadow: none; background: #313a46; border-radius: 10px; cursor: not-allowed; }
+.path-card.locked .portrait { filter: grayscale(1); }
+.card.skill.path { border-top-color: #e0452f; }
+.hud.ascended b:first-child { color: #ff7a5c; }

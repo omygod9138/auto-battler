@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { chooseSkill, finishBattle, newRun, startBattle } from "../src/core/run";
+import { pathsOf } from "../src/core/ascension";
+import { ascend, chooseSkill, finishBattle, newRun, startBattle } from "../src/core/run";
 import { Rng } from "../src/core/rng";
 import type { ClassId } from "../src/core/stats";
 
@@ -8,6 +9,7 @@ export function randomRun(cls: ClassId, seed: number, cap = 40): number {
   const s = newRun(seed, cls);
   const rng = new Rng(seed);
   while (s.phase !== "over" && s.round <= cap) {
+    if (s.phase === "ascend") ascend(s, rng.pick(pathsOf(cls)).id);
     chooseSkill(s, rng.pick(s.offers));
     finishBattle(s, startBattle(s).runToEnd() === "win");
   }

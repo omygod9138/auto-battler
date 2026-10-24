@@ -1,4 +1,4 @@
-import type { ClassId, Stats } from "./stats";
+import type { ClassId, PathId, Stats } from "./stats";
 
 export type SkillId =
   // Warrior
@@ -7,6 +7,8 @@ export type SkillId =
   | "longshot" | "pinningArrow" | "scatterShot" | "disengage" | "snare" | "concussive" | "eagleEye" | "poison" | "rapidFire"
   // Mage
   | "fireball" | "gust" | "tidalWave" | "stoneSpike" | "manaShield" | "arcane" | "ignite" | "timeWarp" | "attunement" | "lingering"
+  // Berserker (Warrior ascension)
+  | "whirlwind" | "leapSmash" | "twinFury" | "recklessSwing" | "painFuel" | "bloodthirst" | "undyingRage" | "battleTrance" | "seething" | "bloodFrenzy" | "bottomless"
   // Shared
   | "vitality" | "might" | "swiftness" | "regeneration" | "lucky" | "vampirism" | "fortify" | "executioner";
 
@@ -21,6 +23,8 @@ export interface SkillDef {
   cls: ClassId | "any";
   kind: SkillKind;
   cat?: SkillCat;
+  /** Only offered after the class ascends into this path. */
+  path?: PathId;
   /** Description at a given level (1-based). */
   desc: (lv: number) => string;
   /** Stat changes; proc and active effects live in the battle sim. */
@@ -48,7 +52,7 @@ export const COMBOS: Combo[] = [
 
 /** Hidden, for every class: an unarmed attack on a knocked-back mob launches it airborne,
  * and knockback on an airborne mob goes AIR_KNOCK_MULT× as far along the attack. Not shown on any card. */
-export const UNARMED: SkillId[] = ["spartanKick", "charge"];
+export const UNARMED: SkillId[] = ["spartanKick", "charge", "leapSmash"];
 export const AIR_KNOCK_MULT = 10;
 /** Seconds after a knockback lands that the mob is still off balance, open to an unarmed launch. */
 export const OFF_BALANCE = 2;
@@ -219,6 +223,32 @@ export const SKILL_NUM = {
   /** Seconds added to marks and what reactions leave. */
   lingering: (lv: number) => 1 * lv,
   executioner: (lv: number) => ({ below: 0.3, mult: 1.25 + 0.25 * lv }),
+  // Berserker. Rage costs and thresholds are in Rage points (RAGE.max at the base cap).
+  whirlwind: (lv: number) => ({ cd: 6, cost: 50, hits: 6, dur: 2, mult: 0.8 + 0.2 * lv }),
+  leapSmash: (lv: number) => ({ cd: 8 - lv, range: 6, mult: 1.5 + 0.5 * lv, rage: 25 }),
+  twinFury: (lv: number) => ({ need: 50, mult: 0.25 + 0.25 * lv }),
+  recklessSwing: (lv: number) => ({ cd: 7 - lv, mult: 1.6 + 0.4 * lv, taken: 0.15, dur: 3, rage: 20 }),
+  painFuel: (lv: number) => 0.1 + 0.1 * lv,
+  bloodthirst: (lv: number) => ({ steal: 0.02 + 0.02 * lv, max: 3 }),
+  undyingRage: (lv: number) => ({ need: 50, frenzy: 2 + lv, speed: 0.5, dmg: 0.3 }),
+  /** Share of max Rage needed for the trance. */
+  battleTrance: (lv: number) => ({ need: [1, 0.85, 0.7][lv - 1] ?? 0.7, dr: 0.3 }),
+  /** Rage per second (as % of max) while below lowHp. */
+  seething: (lv: number) => ({ lowHp: 0.5, gain: 3 + 2 * lv }),
+  bloodFrenzy: (lv: number) => 0.5 * lv,
+  bottomless: (lv: number) => 0.25 + 0.25 * lv,
+};
+
+/** The Berserker's Rage: fills on hits dealt and damage taken, drains after RAGE.idle seconds without either. */
+export const RAGE = {
+  max: 100,
+  /** Per hit landed. */
+  perHit: 6,
+  /** Per whole max HP of damage taken. */
+  taken: 150,
+  idle: 1.5,
+  /** Per second once idle. */
+  drain: 12,
 };
 
 const S = SKILL_NUM;
@@ -283,6 +313,29 @@ export const SKILLS: Record<SkillId, SkillDef> = {
     desc: (lv) => `Element reactions hit ${pct(S.attunement(lv) - 1)} harder and their stuns and roots last ${pct(S.attunement(lv) - 1)} longer.` },
   lingering: { id: "lingering", name: "Lingering", icon: "⌛", cls: "mage", kind: "passive", cat: "passive",
     desc: (lv) => `Element marks, zones and clouds last +${S.lingering(lv)}s.` },
+
+  whirlwind: { id: "whirlwind", name: "Whirlwind", icon: "🌪️", cls: "warrior", path: "berserker", kind: "active", cat: "attack",
+    desc: (lv) => `Spend ${S.whirlwind(lv).cost} Rage: spin for ${S.whirlwind(lv).dur}s, ${S.whirlwind(lv).hits} axe hits of ×${num(S.whirlwind(lv).mult)}. Every ${S.whirlwind(lv).cd}s at most.` },
+  leapSmash: { id: "leapSmash", name: "Leap Smash", icon: "🦘", cls: "warrior", path: "berserker", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${S.leapSmash(lv).cd}s: leap in from up to ${S.leapSmash(lv).range}m and smash for ×${num(S.leapSmash(lv).mult)}, +${S.leapSmash(lv).rage} Rage. Unarmed: launches a knocked-back mob.` },
+  twinFury: { id: "twinFury", name: "Twin Fury", icon: "⚔️", cls: "warrior", path: "berserker", kind: "proc", cat: "attack",
+    desc: (lv) => `Above ${S.twinFury(lv).need} Rage, swings hit twice: the off-hand axe for ×${num(S.twinFury(lv).mult)}.` },
+  recklessSwing: { id: "recklessSwing", name: "Reckless Swing", icon: "💢", cls: "warrior", path: "berserker", kind: "active", cat: "attack",
+    desc: (lv) => `Every ${S.recklessSwing(lv).cd}s: ×${num(S.recklessSwing(lv).mult)} swing, +${S.recklessSwing(lv).rage} Rage, but take +${pct(S.recklessSwing(lv).taken)} damage for ${S.recklessSwing(lv).dur}s.` },
+  painFuel: { id: "painFuel", name: "Pain Fuel", icon: "🔥", cls: "warrior", path: "berserker", kind: "proc", cat: "defense",
+    desc: (lv) => `${pct(S.painFuel(lv))} of damage taken becomes Rage instead of lost HP (until Rage is full).` },
+  bloodthirst: { id: "bloodthirst", name: "Bloodthirst", icon: "🩸", cls: "warrior", path: "berserker", kind: "proc", cat: "defense",
+    desc: (lv) => `${pct(S.bloodthirst(lv).steal)} lifesteal, up to ×${S.bloodthirst(lv).max} at full Rage.` },
+  undyingRage: { id: "undyingRage", name: "Undying Rage", icon: "💀", cls: "warrior", path: "berserker", kind: "proc", cat: "defense",
+    desc: (lv) => `Once per fight, a lethal hit leaves you at 1 HP if you have ${S.undyingRage(lv).need}+ Rage: spends it all for a ${S.undyingRage(lv).frenzy}s frenzy (+${pct(S.undyingRage(lv).speed)} attack speed, +${pct(S.undyingRage(lv).dmg)} damage).` },
+  battleTrance: { id: "battleTrance", name: "Battle Trance", icon: "🧘", cls: "warrior", path: "berserker", kind: "proc", cat: "defense",
+    desc: (lv) => `At ${pct(S.battleTrance(lv).need)} Rage or more: take ${pct(S.battleTrance(lv).dr)} less damage and shrug off stuns and knockback.` },
+  seething: { id: "seething", name: "Seething", icon: "😠", cls: "warrior", path: "berserker", kind: "passive", cat: "passive",
+    desc: (lv) => `Rage never drains. Below ${pct(S.seething(lv).lowHp)} HP, gain ${S.seething(lv).gain}% Rage per second.` },
+  bloodFrenzy: { id: "bloodFrenzy", name: "Blood Frenzy", icon: "🐺", cls: "warrior", path: "berserker", kind: "passive", cat: "passive",
+    desc: (lv) => `+${pct(S.bloodFrenzy(lv))} Rage from every hit.` },
+  bottomless: { id: "bottomless", name: "Bottomless", icon: "🕳️", cls: "warrior", path: "berserker", kind: "passive", cat: "passive",
+    desc: (lv) => `Max Rage +${pct(S.bottomless(lv))}.` },
 
   vitality: { id: "vitality", name: "Vitality", icon: "❤️", cls: "any", kind: "passive",
     desc: (lv) => `+${pct(0.25 * lv)} max HP.`, apply: (s, lv) => { s.maxHp = Math.round(s.maxHp * (1 + 0.25 * lv)); } },

@@ -1,5 +1,6 @@
 // Dev sandbox (open with ?sandbox): pick any skills and levels, fight a dummy or a
 // round's mob, slow time down, and read a log of skill hits and combos.
+import { ascendStats } from "../core/ascension";
 import { Battle, type BattleEvent } from "../core/battle";
 import { mobForRound } from "../core/mobs";
 import { BAND_EDGE, BAND_HOLD, COMBOS, MAX_LEVEL, OFF_BAND, REACTIONS, comboEffect, reactionEffect, SKILLS, heroStats, type SkillId, type SkillLevels } from "../core/skills";
@@ -16,6 +17,7 @@ interface Setup {
 }
 
 const PRESETS: { name: string; cls: ClassId; levels: SkillLevels }[] = [
+  { name: "Berserker: Rage kit", cls: "warrior", levels: { whirlwind: 1, leapSmash: 1, twinFury: 1, recklessSwing: 1, shieldBash: 1, bloodthirst: 1 } },
   { name: "Warrior: full combo", cls: "warrior", levels: { charge: 1, spartanKick: 1, shieldBash: 1, heavyStrike: 1 } },
   { name: "Warrior: Kick → Charge", cls: "warrior", levels: { charge: 1, spartanKick: 1 } },
   { name: "Warrior: Charge → Bash → Heavy", cls: "warrior", levels: { charge: 1, shieldBash: 1, heavyStrike: 1 } },
@@ -101,7 +103,7 @@ export function startSandbox(app: HTMLElement): void {
           <label>Class <select id="sb-cls">${(Object.keys(CLASSES) as ClassId[]).map((c) => `<option value="${c}" ${c === setup.cls ? "selected" : ""}>${CLASSES[c].name}</option>`).join("")}</select></label>
           <label>Opponent <select id="sb-round">
             <option value="0">Training dummy (never hits back)</option>
-            ${Array.from({ length: 15 }, (_, i) => i + 1).map((r) => `<option value="${r}" ${r === setup.round ? "selected" : ""}>Round ${r}: ${mobForRound(r).def.name}</option>`).join("")}
+            ${Array.from({ length: 40 }, (_, i) => i + 1).map((r) => `<option value="${r}" ${r === setup.round ? "selected" : ""}>Round ${r}: ${mobForRound(r).def.name}</option>`).join("")}
           </select></label>
           <label>Speed <select id="sb-speed">${[0.25, 0.5, 1, 2].map((v) => `<option ${v === setup.speed ? "selected" : ""}>${v}</option>`).join("")}</select></label>
           <label>Seed <input id="sb-seed" type="number" value="${setup.seed}" style="width:5em"></label>
@@ -129,7 +131,10 @@ export function startSandbox(app: HTMLElement): void {
     save(setup);
     const levels = Object.fromEntries(Object.entries(setup.levels).filter(([, lv]) => lv)) as SkillLevels;
     const mob = setup.round ? mobForRound(setup.round) : null;
-    const battle = new Battle(heroStats(CLASSES[setup.cls].base, levels), levels, mob?.stats ?? DUMMY, setup.seed, mob?.def.enrage ?? false, CLASSES[setup.cls].start);
+    // Any Berserker skill makes the hero an ascended Berserker.
+    const path = (Object.keys(levels) as SkillId[]).some((id) => SKILLS[id].path === "berserker") ? "berserker" : null;
+    const base = heroStats(CLASSES[setup.cls].base, levels);
+    const battle = new Battle(path ? ascendStats(base) : base, levels, mob?.stats ?? DUMMY, setup.seed, mob?.def.enrage ?? false, CLASSES[setup.cls].start, path);
     const canvas = app.querySelector<HTMLCanvasElement>("canvas.arena")!;
     const log = app.querySelector<HTMLOListElement>("#sb-log")!;
     const status = app.querySelector<HTMLElement>("#sb-status")!;

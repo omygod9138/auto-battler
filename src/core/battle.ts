@@ -1,9 +1,10 @@
+import { SUNDER } from "./ascension";
 import { Rng } from "./rng";
 import {
-  AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, FLURRY, GROUND_SLAM_LABEL, THRUST_LABEL, BAND_HOLD, BAND_NAME, BAND_OF, COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, OFF_BALANCE, OFF_BAND, SKILL_NUM as N, SPELL_HOLD, UNARMED, UPPERCUT_LABEL, UPPERCUT_UP, bandAt, findReaction,
+  AIR_KNOCK_MULT, AIRBORNE_LABEL, BAND_EDGE, FLURRY, GROUND_SLAM_LABEL, THRUST_LABEL, BAND_HOLD, BAND_NAME, BAND_OF, COMBOS, DERIVED, ELEMENT_OF, MARK_TIME, OFF_BALANCE, OFF_BAND, RAGE, SKILL_NUM as N, SPELL_HOLD, UNARMED, UPPERCUT_LABEL, UPPERCUT_UP, bandAt, findReaction,
   type Band, type Combo, type Derived, type Element, type Reaction, type SkillId, type SkillLevels,
 } from "./skills";
-import type { Stats } from "./stats";
+import type { PathId, Stats } from "./stats";
 
 export const TICK = 1 / 20;
 export const TIME_LIMIT = 60;
@@ -52,7 +53,7 @@ export type BattleEvent =
 export type Outcome = "win" | "loss";
 
 type ActiveId = "shieldBash" | "fireball" | "gust" | "tidalWave" | "stoneSpike" | "charge" | "spartanKick" | "heavyStrike"
-  | "longshot" | "pinningArrow" | "scatterShot" | "disengage";
+  | "longshot" | "pinningArrow" | "scatterShot" | "disengage" | "whirlwind" | "leapSmash" | "recklessSwing";
 /** Ranger attacks in the order they are tried: the closer the mob, the more urgent. */
 const SHOTS = ["scatterShot", "pinningArrow", "longshot"] as const;
 const BAND_RANK: Record<Band, number> = { close: 0, mid: 1, far: 2 };
@@ -84,6 +85,10 @@ const HOP_SPEED = 4;
 const SLAM_HANG = 0.25;
 const THRUST_SPEED = 16;
 const THRUST_MULT = 1;
+/** Leap Smash: seconds in the air, whatever the distance. */
+const LEAP_TIME = 0.8;
+/** Axe Hook drags a grounded mob this far toward the Berserker. */
+const HOOK_PULL = 1;
 
 interface Dot {
   dps: number;
@@ -139,6 +144,19 @@ export class Battle {
   private holdSince = new Map<SkillId, number>();
   /** Where the armed Snare Trap sits, or null while it re-arms (or isn't learned). */
   snareX: number | null;
+  /** Berserker Rage, 0 to rageMax (0 for heroes without Rage). */
+  rage = 0;
+  /** When the hero last dealt or took damage; Rage drains after RAGE.idle seconds without either. */
+  private rageAt = -99;
+  /** Whirlwind hits left, and when the next lands. */
+  spin: { left: number; at: number; first: boolean } | null = null;
+  /** Leap Smash in flight: from where to where, starting when. */
+  leap: { x0: number; x1: number; t0: number } | null = null;
+  /** Seconds left of Undying Rage's frenzy. */
+  frenzy = 0;
+  private undyingUsed = false;
+  /** Seconds left that ascended hits stop the mob regenerating. */
+  private sunder = 0;
 
   constructor(
     heroStats: Stats,
@@ -147,6 +165,8 @@ export class Battle {
     seed: number,
     private mobEnrages = false,
     heroStart = ARENA.heroStart,
+    /** The hero's ascended path, if any. */
+    readonly path: PathId | null = null,
   ) {
     this.rng = new Rng(seed);
     this.lv = (id) => levels[id] ?? 0;
@@ -155,7 +175,7 @@ export class Battle {
     if (this.lv("manaShield")) this.hero.shield = heroStats.maxHp * N.manaShield(this.lv("manaShield")).shield;
     this.snareX = this.lv("snare") ? heroStart + BAND_EDGE.mid : null;
     // Active skills start at half cooldown so the first cast comes early.
-    for (const id of ["shieldBash", ...SHOTS, ...SPELLS, "spartanKick", "heavyStrike"] as const) {
+    for (const id of ["shieldBash", ...SHOTS, ...SPELLS, "spartanKick", "heavyStrike", "whirlwind", "leapSmash", "recklessSwing"] as const) {
       if (this.lv(id)) this.cds.set(id, this.cooldown(id) / 2);
     }
     if (this.lv("disengage")) this.cds.set("disengage", 0);
@@ -169,6 +189,15 @@ export class Battle {
   /** Active skills with seconds left and full cooldown, for the HUD. */
   cooldowns(): { id: SkillId; left: number; total: number }[] {
     return [...this.cds.keys()].map((id) => ({ id, left: this.cds.get(id)!, total: this.cooldown(id as ActiveId) }));
+  }
+
+  /** The most Rage the hero can hold; 0 means the hero has no Rage. */
+  get rageMax(): number {
+    return this.path === "berserker" ? RAGE.max * (1 + (this.lv("bottomless") ? N.bottomless(this.lv("bottomless")) : 0)) : 0;
+  }
+
+  private gainRage(n: number): void {
+    if (this.rageMax) this.rage = Math.min(this.rageMax, this.rage + n);
   }
 
   get distance(): number {
@@ -237,8 +266,11 @@ export class Battle {
         f.push = x === f.x + step ? f.push - step : 0;
         f.x = x;
       }
-      if (f.s.regen > 0 && f.hp < f.s.maxHp) f.hp = Math.min(f.s.maxHp, f.hp + f.s.maxHp * f.s.regen * TICK);
+      if (f.s.regen > 0 && f.hp < f.s.maxHp && !(f.side === "mob" && this.sunder > 0)) f.hp = Math.min(f.s.maxHp, f.hp + f.s.maxHp * f.s.regen * TICK);
     }
+    this.sunder = Math.max(0, this.sunder - TICK);
+    this.frenzy = Math.max(0, this.frenzy - TICK);
+    this.tickRage();
     this.tickElements();
     this.tickTraps();
     for (const [list, kind] of [[this.poison, "poison"], [this.burn, "burn"]] as const) {
@@ -275,7 +307,9 @@ export class Battle {
     // Mid flurry the Warrior is up in the air with the mob, and still slashing.
     if (me.side === "hero" && this.flurry && me.stun === 0) return this.slash();
     if (me.side === "hero" && this.slamDown) return this.slamStep();
+    if (me.side === "hero" && this.leap) return this.leapStep();
     if (me.stun > 0 || me.push !== 0 || me.z > 0) return;
+    if (me.side === "hero" && this.spin) return this.spinStep();
     if (me.side === "hero" && this.dashing) return this.dash();
     if (me.side === "hero" && this.pending) {
       if (this.time >= this.pending.at - 1e-9) {
@@ -325,6 +359,16 @@ export class Battle {
     this.heroAttack();
   }
 
+  private tickRage(): void {
+    const max = this.rageMax;
+    if (!max) return;
+    const h = this.hero;
+    if (this.lv("seething")) {
+      const n = N.seething(this.lv("seething"));
+      if (h.hp < h.s.maxHp * n.lowHp) this.gainRage((max * n.gain) / 100 * TICK);
+    } else if (this.time - this.rageAt > RAGE.idle) this.rage = Math.max(0, this.rage - RAGE.drain * TICK);
+  }
+
   private interval(f: Fighter): number {
     if (f.side === "mob") {
       if (this.mobEnrages && f.hp < f.s.maxHp / 2) {
@@ -339,7 +383,8 @@ export class Battle {
     const berserk = this.lv("berserk") ? N.berserk(this.lv("berserk")) * (1 - f.hp / f.s.maxHp) : 0;
     // Rapid Fire's bonus counts twice when the mob is Close.
     const panic = this.lv("rapidFire") && this.band === "close" ? N.rapidFire(this.lv("rapidFire")) : 0;
-    return f.s.interval / (1 + berserk) / (1 + panic);
+    const frenzy = this.frenzy > 0 ? N.undyingRage(this.lv("undyingRage")).speed : 0;
+    return f.s.interval / (1 + berserk) / (1 + panic) / (1 + frenzy);
   }
 
   /** Fire at most one ready active skill. Returns true if one fired: that is the hero's whole action this tick. */
@@ -390,7 +435,72 @@ export class Battle {
       this.windUp("spartanKick");
       return true;
     }
+    // The Berserker's own skills fit around the Warrior combos above.
+    return this.castBerserker(dist, inRange);
+  }
+
+  /** Berserker: Whirlwind when there's Rage to spend, Leap Smash in from range, Reckless Swing up close. */
+  private castBerserker(dist: number, inRange: boolean): boolean {
+    const ready = (id: SkillId) => this.lv(id) > 0 && this.cds.get(id) === 0;
+    if (ready("whirlwind") && inRange && this.rage >= N.whirlwind(this.lv("whirlwind")).cost - 1e-9) {
+      this.cds.set("whirlwind", this.cooldown("whirlwind"));
+      this.rage -= N.whirlwind(this.lv("whirlwind")).cost;
+      this.windUp("whirlwind");
+      return true;
+    }
+    if (ready("leapSmash") && dist <= N.leapSmash(this.lv("leapSmash")).range + this.hero.s.range && this.mob.push === 0) {
+      this.cds.set("leapSmash", this.cooldown("leapSmash"));
+      this.rollDodge();
+      const h = this.hero;
+      this.leap = { x0: h.x, x1: Math.max(h.x, this.mob.x - h.s.range), t0: this.time };
+      h.vz = (GRAVITY * LEAP_TIME) / 2;
+      h.z = 1e-3;
+      this.emit({ t: this.time, type: "windup", target: "mob", skill: "leapSmash", at: this.time + LEAP_TIME });
+      return true;
+    }
+    if (ready("recklessSwing") && inRange) {
+      this.cds.set("recklessSwing", this.cooldown("recklessSwing"));
+      this.windUp("recklessSwing");
+      return true;
+    }
     return false;
+  }
+
+  /** Leap Smash in flight: arc over to the mob and smash down on landing. */
+  private leapStep(): void {
+    const l = this.leap!;
+    const h = this.hero;
+    const k = Math.min(1, (this.time - l.t0) / LEAP_TIME);
+    h.x = l.x0 + (l.x1 - l.x0) * k;
+    this.walkedAt.hero = this.time;
+    if (k < 1) return;
+    h.z = 0;
+    h.vz = 0;
+    this.leap = null;
+    this.recover();
+    const n = N.leapSmash(this.lv("leapSmash"));
+    this.combo("leapSmash");
+    if (this.physical(h.s.dmg * n.mult, "bash", "Leap Smash!", "leapSmash")) {
+      this.gainRage(n.rage);
+      this.launch();
+      this.knock(0.5);
+    }
+  }
+
+  /** One axe hit of a Whirlwind; the spin carries on through its hits wherever the mob is. */
+  private spinStep(): void {
+    const sp = this.spin!;
+    if (this.time < sp.at - 1e-9) return;
+    const n = N.whirlwind(this.lv("whirlwind"));
+    if (Math.abs(this.mob.x - this.hero.x) <= this.hero.s.range + 1 + 1e-6) {
+      this.physical(this.hero.s.dmg * n.mult, "slash", sp.first ? "Whirlwind!" : undefined, sp.first ? "whirlwind" : undefined);
+      sp.first = false;
+    }
+    sp.at = this.time + n.dur / n.hits;
+    if (--sp.left <= 0) {
+      this.spin = null;
+      this.recover();
+    }
   }
 
   /** Ranger: Disengage when the mob gets Close, and fire a ready shot once the mob is in its band,
@@ -495,6 +605,7 @@ export class Battle {
     if (this.pending && this.time + TICK >= this.pending.at - 1e-9) return next(this.pending.skill);
     if (this.slamNext() && this.time + TICK >= this.flurry!.at - 1e-9) return this.nextDodge ? null : (this.peekCombo("heavyStrike")?.label ?? GROUND_SLAM_LABEL);
     if (this.dashing && this.mob.x - h.x - h.s.range <= DASH_SPEED * TICK) return next("charge");
+    if (this.leap && this.time + TICK >= this.leap.t0 + LEAP_TIME - 1e-9) return next("leapSmash");
     return null;
   }
 
@@ -525,6 +636,20 @@ export class Battle {
     this.pending = null;
     const h = this.hero;
     if (skill === "heavyStrike") return this.heroAttack(true);
+    if (skill === "whirlwind") {
+      this.combo("whirlwind");
+      this.spin = { left: N.whirlwind(this.lv("whirlwind")).hits, at: this.time, first: true };
+      this.nextDodge = null;
+      return this.spinStep();
+    }
+    if (skill === "recklessSwing") {
+      const n = N.recklessSwing(this.lv("recklessSwing"));
+      this.combo("recklessSwing");
+      if (this.physical(h.s.dmg * n.mult, "slash", "Reckless Swing!", "recklessSwing")) this.gainRage(n.rage);
+      h.vuln = n.dur;
+      h.vulnMult = 1 + n.taken;
+      return;
+    }
     if (skill === "fireball") {
       const n = N.fireball(this.lv("fireball"));
       this.spell(h.s.dmg * n.mult, "fireball", "Fireball", "fireball");
@@ -560,8 +685,11 @@ export class Battle {
       const n = N.shieldBash(this.lv("shieldBash"));
       const c = this.combo("shieldBash");
       const air = this.airborne;
-      const hit = this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", air ? "Uppercut!" : "Bash!", "shieldBash");
+      const axe = this.path === "berserker";
+      const hit = this.physical(h.s.dmg * n.mult * (c?.dmgMult ?? 1), "bash", air ? "Uppercut!" : axe ? "Hook!" : "Bash!", "shieldBash");
       this.mob.stun = Math.max(this.mob.stun, n.stun * (c?.stunMult ?? 1));
+      // Axe Hook: the Berserker's axe drags a grounded mob in toward him.
+      if (hit && axe && !air) this.mob.push -= Math.min(HOOK_PULL, Math.max(0, this.distance - h.s.range * 0.5));
       if (hit && air) {
         // Hidden: against an airborne mob the bash swings up into an uppercut, then a flurry of slashes.
         this.emit({ t: this.time, type: "status", target: "mob", label: UPPERCUT_LABEL });
@@ -619,7 +747,11 @@ export class Battle {
       this.slamStep();
       return;
     }
-    this.physical(this.hero.s.dmg * FLURRY.mult, "slash", "Slash!", "shieldBash");
+    // The Berserker cuts with both axes: two hits of half the damage each.
+    if (this.path === "berserker") {
+      this.physical(this.hero.s.dmg * FLURRY.mult / 2, "slash", "Chop!", "shieldBash");
+      this.physical(this.hero.s.dmg * FLURRY.mult / 2, "slash", "Chop!", "shieldBash");
+    } else this.physical(this.hero.s.dmg * FLURRY.mult, "slash", "Slash!", "shieldBash");
     f.at = this.time + FLURRY.gap;
     if (f.left > 1 && m.z > 0) m.vz = Math.max(m.vz, GRAVITY * FLURRY.gap);
     // Decide now whether the finisher will be dodged, so the pause before it never announces a miss.
@@ -707,6 +839,10 @@ export class Battle {
     if (c) mult *= c.dmgMult ?? 1;
     const fx: FxKind = h.s.magic ? "bolt" : h.s.range > 2 ? "arrow" : "slash";
     const landed = this.physical(h.s.dmg * mult, fx, label, skill);
+    // Twin Fury: with Rage up, a plain swing is followed by the off-hand axe.
+    if (!skill && this.lv("twinFury") && this.rage > N.twinFury(this.lv("twinFury")).need && !this.outcome) {
+      this.physical(h.s.dmg * N.twinFury(this.lv("twinFury")).mult, fx, "Twin Fury!");
+    }
     if (!landed) return;
 
     if (this.lv("poison")) {
@@ -731,7 +867,8 @@ export class Battle {
     const crit = this.rng.next() < h.s.crit;
     const far = this.band === "far";
     const critMult = h.s.critMult + (far && this.lv("eagleEye") ? N.eagleEye(this.lv("eagleEye")).farCrit : 0);
-    let dmg = raw * (crit ? critMult : 1) * this.execute();
+    const frenzy = this.frenzy > 0 ? 1 + N.undyingRage(this.lv("undyingRage")).dmg : 1;
+    let dmg = raw * (crit ? critMult : 1) * this.execute() * frenzy;
     if (!h.s.magic) dmg = Math.max(1, dmg - m.s.armor);
     if (far && this.lv("concussive")) {
       const c = N.concussive(this.lv("concussive"));
@@ -867,7 +1004,12 @@ export class Battle {
     dmg *= this.slam();
     this.mob.hp -= dmg;
     this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label, skill, ...(this.flurry ? { flurry: FLURRY.hits - this.flurry.left + 1 } : this.slamDown ? { flurry: FLURRY.hits + 1 } : {}) });
-    const heal = dmg * (this.hero.s.lifesteal + (this.lv("bloodlust") ? N.bloodlust(this.lv("bloodlust")) : 0));
+    if (this.path) this.sunder = SUNDER;
+    this.rageAt = this.time;
+    this.gainRage(RAGE.perHit * (1 + (this.lv("bloodFrenzy") ? N.bloodFrenzy(this.lv("bloodFrenzy")) : 0)));
+    const thirst = this.lv("bloodthirst") && this.rageMax ? N.bloodthirst(this.lv("bloodthirst")) : null;
+    const steal = thirst ? thirst.steal * (1 + (thirst.max - 1) * Math.min(1, this.rage / RAGE.max)) : 0;
+    const heal = dmg * (this.hero.s.lifesteal + steal + (this.lv("bloodlust") ? N.bloodlust(this.lv("bloodlust")) : 0));
     this.healHero(heal);
     this.checkDeath();
   }
@@ -894,7 +1036,17 @@ export class Battle {
     const crit = this.rng.next() < m.s.crit;
     let dmg = m.s.dmg * (crit ? m.s.critMult : 1);
     if (!m.s.magic) dmg = Math.max(1, dmg - h.s.armor);
-    dmg *= h.s.dmgTaken;
+    dmg *= h.s.dmgTaken * (h.vuln > 0 ? h.vulnMult : 1);
+    if (this.lv("battleTrance") && this.rageMax && this.rage >= this.rageMax * N.battleTrance(this.lv("battleTrance")).need - 1e-9) {
+      dmg *= 1 - N.battleTrance(this.lv("battleTrance")).dr;
+    }
+    if (this.rageMax) {
+      this.rageAt = this.time;
+      // Pain Fuel turns part of the blow into Rage instead of lost HP, while there's room for it.
+      const fuel = this.lv("painFuel") && this.rage < this.rageMax ? dmg * N.painFuel(this.lv("painFuel")) : 0;
+      this.gainRage(((dmg + fuel) / h.s.maxHp) * RAGE.taken);
+      dmg -= fuel;
+    }
     if (h.shield > 0) {
       const absorbed = Math.min(h.shield, dmg);
       h.shield -= absorbed;
@@ -906,6 +1058,13 @@ export class Battle {
       const t = dmg * N.thorns(this.lv("thorns")) * this.slam();
       m.hp -= t;
       this.emit({ t: this.time, type: "dot", target: "mob", amount: t, kind: "thorns" });
+    }
+    if (h.hp <= 0 && this.lv("undyingRage") && !this.undyingUsed && this.rage >= N.undyingRage(this.lv("undyingRage")).need - 1e-9) {
+      this.undyingUsed = true;
+      h.hp = 1;
+      this.rage = 0;
+      this.frenzy = N.undyingRage(this.lv("undyingRage")).frenzy;
+      this.emit({ t: this.time, type: "status", target: "hero", label: "💀 Undying Rage!" });
     }
     if (this.lv("secondWind") && !this.secondWindUsed && h.hp > 0 && h.hp < h.s.maxHp * 0.3) {
       this.secondWindUsed = true;
