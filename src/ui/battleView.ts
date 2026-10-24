@@ -40,6 +40,8 @@ const isCombo = (label: string) => label.startsWith("Combo") || label === AIRBOR
 /** Uppercut Flurry slashes rise, cut flat, then come down, so a Heavy Strike taking the third reads as the downswing.
  * The slash sheet is an overhead downswing: flipped it rises, squashed it cuts across. */
 const FLURRY_ANGLES: { flip?: boolean; squash?: number }[] = [{ flip: true }, { squash: 0.4 }, {}];
+/** How far into the Heavy Strike's strike the downward thrust holds: the blade swung down in front. */
+const THRUST_FRAME = 0.35;
 /** Screen px per arena unit of height: flatter than across, so a juggled mob stays on screen. */
 const LIFT_SCALE = 22;
 /** Screen px a fighter is lifted off the ground while airborne. */
@@ -216,7 +218,8 @@ export function playBattle(
         }
         if (e.label === THRUST_LABEL && target === "mob") {
           // The downward thrust ends the combo: a star of impact, the floor cracks and a ring rolls out.
-          scene.anim[attacker].lunge = scene.now;
+          // The Heavy Strike's swing plays on from the held frame.
+          scene.anim[attacker].skill = { id: "heavyStrike", at: scene.now - THRUST_FRAME * SKILL_ANIM, phase: "strike", simAt: e.t, simEnd: e.t };
           scene.melee.push({ kind: "kickImpact", born: scene.now, big: true, dx: -10 });
           scene.melee.push({ kind: "groundCrack", born: scene.now + 0.03, big: true, floor: true });
           scene.melee.push({ kind: "shockwave", born: scene.now + 0.03, floor: true });
@@ -491,6 +494,10 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
     const f = side === "hero" ? battle.hero : battle.mob;
     const dashing = side === "hero" && battle.dashing;
     if (dashing) a.walk += dt * 14;
+    // The plunging Warrior leaves a trail of speed lines.
+    if (side === "hero" && battle.slamDown?.phase === "thrust" && !reduced) {
+      for (let i = 0; i < 3; i++) scene.particles.push({ x: px(f.x) - STANDOFF + rand(-16, 16), y: GROUND - lift(battle, "hero") - rand(10, 70), vx: 0, vy: -rand(40, 90), life: 0, max: rand(0.12, 0.22), size: rand(2, 3), color: "rgba(255,255,255,0.85)", gravity: 0 });
+    }
     if (side === "mob") {
       const air = f.z > 0;
       if (scene.mobAir && !air && battle.mob.hp > 0) landFx(scene, px(f.x) + STANDOFF);
@@ -567,7 +574,7 @@ function draw(
       windup: windup(battle, side),
       hurt,
       death: death ?? undefined,
-      skill: skillPose(a.skill, battle, t),
+      skill: (side === "hero" && thrustPose(battle)) || skillPose(a.skill, battle, t),
     });
     drawFighter(ctx, layer, {
       x, facing, h: heights[side],
@@ -583,7 +590,7 @@ function draw(
       lift: lift(battle, side),
       // Thrown head over heels away from the hit: back on the way up, levelling out to land.
       // Plunging into the downward thrust, the Warrior tips over toward the mob.
-      tilt: side === "hero" && battle.slamDown?.phase === "thrust" ? facing * 0.5 : side === "mob" && f.z > 0 ? -facing * Math.min(1, f.z / 1.5) * (f.vz > 0 ? 0.9 : 0.5) : 0,
+      tilt: side === "hero" && battle.slamDown?.phase === "thrust" ? facing * 1.05 : side === "mob" && f.z > 0 ? -facing * Math.min(1, f.z / 1.5) * (f.vz > 0 ? 0.9 : 0.5) : 0,
     });
     if (f.vuln > 0) {
       // Wall Slam debuff marker beside the health bar.
@@ -619,6 +626,15 @@ function draw(
   ctx.font = "13px system-ui, sans-serif";
   ctx.textAlign = "left";
   ctx.fillText(`${battle.time.toFixed(1)}s`, 10, 18);
+}
+
+/** Stand-in for a downward-thrust clip: the Heavy Strike's raised sword while the Warrior hangs at the top,
+ * then its downswing frame held, blade first, as he plunges. */
+function thrustPose(battle: Battle): Pose["skill"] {
+  const phase = battle.slamDown?.phase;
+  if (phase === "hang") return { id: "heavyStrike", phase: "windup", p: 1 };
+  if (phase === "thrust") return { id: "heavyStrike", phase: "strike", p: THRUST_FRAME };
+  return undefined;
 }
 
 function skillPose(s: FighterAnim["skill"], battle: Battle, t: number): Pose["skill"] {
