@@ -195,7 +195,7 @@ export function playBattle(
           scene.anim[attacker].lunge = scene.now;
           scene.melee.push({ kind: "slash", born: scene.now, big: e.crit });
           scene.melee.push({ kind: "hit", born: scene.now + 0.06, big: e.crit, dx: -12 });
-        } else if (e.skill === "heavyStrike" || e.skill === "shieldBash" || e.skill === "charge") {
+        } else if (e.skill === "heavyStrike" || e.skill === "shieldBash" || e.skill === "charge" || e.skill === "spartanKick") {
           // These skills draw their own sprite effects in skillImpact.
           scene.anim[attacker].lunge = scene.now;
         } else if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
@@ -216,7 +216,7 @@ export function playBattle(
         const color = target === "mob" ? (e.crit ? "#ffd84a" : "#ffffff") : "#ff6b5e";
         const absorbed = e.amount < 0.5;
         scene.floaters.push({ born: scene.now, side: target, text: absorbed ? "absorbed" : `${Math.round(e.amount)}${e.crit ? "!" : ""}`, color: absorbed ? "#6fb6ff" : color, size: absorbed ? 14 : e.crit ? 26 : 18, dx });
-        if (e.skill) skillImpact(scene, e.skill, x, y, dir, scene.comboAt === e.t);
+        if (e.skill) skillImpact(scene, e.skill, dir, scene.comboAt === e.t);
         else if (e.label) scene.floaters.push({ born: scene.now, side: attacker, text: e.label, color: "#9fd3ff", size: 15, dx: 0 });
         break;
       }
@@ -266,6 +266,9 @@ export function playBattle(
           scene.wallHit = scene.now;
           scene.shake = Math.max(scene.shake, 12);
           scene.burst(WALL_X, GROUND - 50, 30, "rgba(150,140,130,0.9)", 200, 400, 6);
+          // The mob smacks into the stones: a big impact star and dust against the wall.
+          scene.melee.push({ kind: "kickImpact", born: scene.now, big: true, dx: 18 });
+          scene.melee.push({ kind: "groundCrack", born: scene.now + 0.05, dx: 6 });
           scene.floaters.push({ born: scene.now, side: "mob", text: "🧱 Wall Slam! +33%", color: "#ff9a4d", size: 22, dx: 0, dy: 30 });
           break;
         }
@@ -573,10 +576,9 @@ function drawBands(ctx: CanvasRenderingContext2D, battle: Battle): void {
   ctx.restore();
 }
 
-function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 | -1, combo: boolean): void {
+function skillImpact(scene: Scene, skill: SkillId, dir: 1 | -1, combo: boolean): void {
   const k = SKILLS[skill];
   scene.floaters.push({ born: scene.now, side: dir === 1 ? "hero" : "mob", text: `${k.icon} ${k.name}`, color: "#ffd34d", size: 24, dx: 0 });
-  const hit = x - dir * 14;
   switch (skill) {
     case "shieldBash":
       // The shield's face meets the mob: a white flash and a ring of force, then stun stars circle its head.
@@ -604,9 +606,9 @@ function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 
       scene.shake = Math.max(scene.shake, combo ? 14 : 11);
       break;
     case "spartanKick":
-      scene.add({ kind: "ring", dur: 0.35, x: hit, y: y + 16, color: "#ffffff", size: 60, dir });
-      scene.burst(hit, y + 16, 20, "#f0e6d8", 240, 250, 4);
-      scene.shake = Math.max(scene.shake, 7);
+      // A cream star where the boot lands, then a puff of smoke as the mob is sent flying.
+      scene.melee.push({ kind: "kickImpact", born: scene.now, dx: -12 });
+      scene.shake = Math.max(scene.shake, 8);
       break;
     default:
       scene.shake = Math.max(scene.shake, 5);
