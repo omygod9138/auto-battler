@@ -14,6 +14,10 @@ export interface MeleeFx {
   dx?: number;
   /** Stays on the floor while the mob is airborne, instead of rising with it. */
   floor?: boolean;
+  /** Flipped upside down, e.g. a downward swing turned into a rising one. */
+  flip?: boolean;
+  /** Squashed to this share of its height, e.g. an overhead swing flattened into a sideways cut. */
+  squash?: number;
 }
 
 interface SheetJson {
@@ -116,7 +120,13 @@ export function drawMeleeFx(ctx: CanvasRenderingContext2D, list: MeleeFx[], now:
     const hh = frame.h * k;
     const cx = Math.round(x + (f.dx ?? 0) - w * s.pivot.x);
     const cy = Math.round(ground - (f.floor ? 0 : lift) - h * look.at - hh * s.pivot.y);
-    ctx.drawImage(s.img, frame.x, frame.y, frame.w, frame.h, cx, cy, w, hh);
+    if (f.flip || f.squash) {
+      ctx.save();
+      ctx.translate(cx + w / 2, cy + hh / 2);
+      ctx.scale(1, (f.flip ? -1 : 1) * (f.squash ?? 1));
+      ctx.drawImage(s.img, frame.x, frame.y, frame.w, frame.h, -w / 2, -hh / 2, w, hh);
+      ctx.restore();
+    } else ctx.drawImage(s.img, frame.x, frame.y, frame.w, frame.h, cx, cy, w, hh);
   }
   ctx.imageSmoothingEnabled = smooth;
 }

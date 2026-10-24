@@ -37,10 +37,13 @@ const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const easeOut = (k: number) => 1 - (1 - k) ** 3;
 /** Combos and the hidden airborne launch share the pause, zoom, flash and banner. */
 const isCombo = (label: string) => label.startsWith("Combo") || label === AIRBORNE_LABEL || label === UPPERCUT_LABEL || label === GROUND_SLAM_LABEL;
+/** Uppercut Flurry slashes rise, cut flat, then come down, so a Heavy Strike taking the third reads as the downswing.
+ * The slash sheet is an overhead downswing: flipped it rises, squashed it cuts across. */
+const FLURRY_ANGLES: { flip?: boolean; squash?: number }[] = [{ flip: true }, { squash: 0.4 }, {}];
 /** Screen px per arena unit of height: flatter than across, so a juggled mob stays on screen. */
 const LIFT_SCALE = 22;
 /** Screen px a fighter is lifted off the ground while airborne. */
-const lift = (battle: Battle, side: Side) => (side === "mob" ? battle.mob.z * LIFT_SCALE : 0);
+const lift = (battle: Battle, side: Side) => (side === "mob" ? battle.mob : battle.hero).z * LIFT_SCALE;
 
 export interface BattleLook {
   /** Character ids: a class id for the hero, a mob id for the mob. */
@@ -205,7 +208,7 @@ export function playBattle(
         const big = e.crit || e.label !== undefined;
         scene.anim[target].hurt = scene.now;
         // A slash of an Uppercut Flurry looks like a quick sword swing, not another bash.
-        const flurrySlash = e.flurry && e.skill === "shieldBash";
+        const flurrySlash = !!e.flurry && e.skill === "shieldBash";
         if (e.skill && !flurrySlash) {
           // After its wind-up a clip plays the strike part; a skill that never wound up plays it whole.
           const wound = scene.anim[attacker].skill?.id === e.skill && scene.anim[attacker].skill?.phase === "windup";
@@ -213,8 +216,10 @@ export function playBattle(
         }
         if (e.fx === "slash" && (!e.skill || flurrySlash) && target === "mob") {
           // A plain sword swing: a steel crescent across the mob, then a hit flash where the blade meets it.
+          // Flurry slashes cut from different angles: up, across, then down.
           scene.anim[attacker].lunge = scene.now;
-          scene.melee.push({ kind: "slash", born: scene.now, big: e.crit });
+          const angle = flurrySlash ? FLURRY_ANGLES[(e.flurry! - 1) % FLURRY_ANGLES.length] : {};
+          scene.melee.push({ kind: "slash", born: scene.now, big: e.crit || flurrySlash, ...angle });
           scene.melee.push({ kind: "hit", born: scene.now + 0.06, big: e.crit, dx: -12 });
         } else if (e.skill === "heavyStrike" || e.skill === "shieldBash" || e.skill === "charge" || e.skill === "spartanKick") {
           // These skills draw their own sprite effects in skillImpact.
@@ -569,7 +574,7 @@ function draw(
       t,
       lift: lift(battle, side),
       // Thrown head over heels away from the hit: back on the way up, levelling out to land.
-      tilt: f.z > 0 ? -facing * Math.min(1, f.z / 1.5) * (f.vz > 0 ? 0.9 : 0.5) : 0,
+      tilt: side === "mob" && f.z > 0 ? -facing * Math.min(1, f.z / 1.5) * (f.vz > 0 ? 0.9 : 0.5) : 0,
     });
     if (f.vuln > 0) {
       // Wall Slam debuff marker beside the health bar.

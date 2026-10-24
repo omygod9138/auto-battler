@@ -559,6 +559,10 @@ describe("hidden airborne combo", () => {
       expect(b.mob.z).toBeGreaterThan(0);
       b.step();
     }
+    // The Warrior leapt up after it, and comes back down once the flurry ends.
+    expect(b.hero.z).toBeGreaterThan(0);
+    stepUntil(b, () => b.hero.z === 0);
+    expect(b.hero.z).toBe(0);
     const flurry = b.events.filter((e) => e.type === "damage" && e.flurry);
     for (let i = 1; i < flurry.length; i++) expect(flurry[i].t - flurry[i - 1].t).toBeCloseTo(FLURRY.gap, 5);
   });

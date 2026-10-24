@@ -41,7 +41,7 @@ export type FxKind = "slash" | "arrow" | "bolt" | "fireball" | "water" | "wind" 
 
 /** What happened during a tick, for floating numbers and projectiles. */
 export type BattleEvent =
-  | { t: number; type: "damage"; target: Side; amount: number; crit: boolean; fx: FxKind; label?: string; skill?: SkillId; /** A slash of an Uppercut Flurry. */ flurry?: boolean }
+  | { t: number; type: "damage"; target: Side; amount: number; crit: boolean; fx: FxKind; label?: string; skill?: SkillId; /** Which hit of an Uppercut Flurry this is, from 1. */ flurry?: number }
   | { t: number; type: "dot"; target: Side; amount: number; kind: "poison" | "burn" | "thorns" }
   | { t: number; type: "heal"; target: Side; amount: number }
   | { t: number; type: "dodge"; target: Side }
@@ -75,6 +75,8 @@ const PUSH_MIN_STEP = 0.1;
 const GRAVITY = 12;
 const LAUNCH_SPEED = 9;
 const SKY = 3.5;
+/** In an Uppercut Flurry the Warrior hangs this far below the mob. */
+const HERO_BELOW = 0.4;
 
 interface Dot {
   dps: number;
@@ -261,9 +263,10 @@ export class Battle {
   }
 
   private act(me: Fighter, foe: Fighter): void {
+    // Mid flurry the Warrior is up in the air with the mob, and still slashing.
+    if (me.side === "hero" && this.flurry && me.stun === 0) return this.slash();
     if (me.stun > 0 || me.push !== 0 || me.z > 0) return;
     if (me.side === "hero" && this.dashing) return this.dash();
-    if (me.side === "hero" && this.flurry) return this.slash();
     if (me.side === "hero" && this.pending) {
       if (this.time >= this.pending.at - 1e-9) {
         this.land(this.pending.skill);
@@ -583,8 +586,12 @@ export class Battle {
    * Each slash but the last bumps the mob up just enough to stay airborne for the next. */
   private slash(): void {
     const f = this.flurry!;
-    if (this.time < f.at - 1e-9) return;
     const m = this.mob;
+    const h = this.hero;
+    // The Warrior leaps after the mob and hangs at its height for the slashes.
+    h.z += (Math.max(0, m.z - HERO_BELOW) - h.z) * 0.5;
+    h.vz = 0;
+    if (this.time < f.at - 1e-9) return;
     if (this.slamNext()) {
       // Heavy Strike takes the last slash: a powerful blow that drives the mob into the ground.
       const landed = !this.nextDodge;
@@ -595,6 +602,8 @@ export class Battle {
       if (!landed) return;
       m.z = 0;
       m.vz = 0;
+      // And dives down after it.
+      h.vz = -LAUNCH_SPEED;
       this.emit({ t: this.time, type: "status", target: "mob", label: GROUND_SLAM_LABEL });
       return;
     }
@@ -819,7 +828,7 @@ export class Battle {
   private dealToMob(dmg: number, crit: boolean, fx: FxKind, label?: string, skill?: SkillId): void {
     dmg *= this.slam();
     this.mob.hp -= dmg;
-    this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label, skill, ...(this.flurry ? { flurry: true } : {}) });
+    this.emit({ t: this.time, type: "damage", target: "mob", amount: dmg, crit, fx, label, skill, ...(this.flurry ? { flurry: FLURRY.hits - this.flurry.left + 1 } : {}) });
     const heal = dmg * (this.hero.s.lifesteal + (this.lv("bloodlust") ? N.bloodlust(this.lv("bloodlust")) : 0));
     this.healHero(heal);
     this.checkDeath();
