@@ -193,7 +193,7 @@ export function playBattle(
           // Eruption bursts up from the ground, so it skips the falling meteor.
           if (!(e.fx === "meteor" && e.label && REACTION_FX[e.label])) scene.shots.push({ born: scene.now, from: attacker, fx: e.fx });
           // Reactions with pixel art draw their own hit.
-          if (e.skill === "fireball" || e.skill === "gust") scene.spells.push({ kind: e.skill, born: scene.now + 0.16 });
+          if (e.skill === "fireball" || e.skill === "gust" || e.skill === "tidalWave") scene.spells.push({ kind: e.skill, born: scene.now + 0.16 });
           else if (!(e.label && REACTION_FX[e.label])) impact(scene, e.fx, x, y, big);
         }
         if (e.fx === "meteor") scene.shake = Math.max(scene.shake, 14);
@@ -831,7 +831,7 @@ function drawShots(ctx: CanvasRenderingContext2D, scene: Scene, battle: Battle, 
         if (Math.random() < 0.6) scene.particles.push({ x, y, vx: rand(-20, 20), vy: rand(-40, -10), life: 0, max: 0.4, size: 4, color: "#ffb347", gravity: -50 });
         break;
       case "water":
-        glyph(ctx, "🌊", x, y, 24, 1);
+        drawProjectile(ctx, "water", x, GROUND, dir, scene.now);
         break;
       case "wind":
         drawProjectile(ctx, "wind", x, y, dir, scene.now);

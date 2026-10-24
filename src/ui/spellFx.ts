@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian" | "electrocute" | "fireball" | "gust";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian" | "electrocute" | "fireball" | "gust" | "tidalWave";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -14,7 +14,7 @@ export interface SpellFx {
 /** Effects by reaction name. */
 export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam", Eruption: "eruption", Obsidian: "obsidian", Electrocute: "electrocute" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4, electrocute: 1.7, fireball: 0.8, gust: 0.75 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4, electrocute: 1.7, fireball: 0.8, gust: 0.75, tidalWave: 1.15 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -40,6 +40,7 @@ const GLASS = ["#ffffff", "#d8f6ff", "#8fdcf0", "#4aa8c8", "#2a6a8a"];
 const LAVA = ["#2a0e08", "#5a1a0c", "#c2380f", "#ff7a1a", "#ffc23a", "#fff1a0"];
 const WATER = ["#e6f6ff", "#8fd0ff", "#4a90d0"];
 const OBSIDIAN = ["#0c0a14", "#1e1a2e", "#3a3354", "#6a5d94", "#c4b4ff", "rgba(30,26,46,0.7)"];
+const WAVE = ["#ffffff", "#c4ecff", "#6cbcf2", "#3a86d0", "#22579e", "#163a72"];
 const SAND = ["#f4e2a8", "#d9b46a", "#b08848", "#7a5a32"];
 
 /** Fills whole art pixels on ctx. */
@@ -71,6 +72,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "electrocute") electrocute(dot, ax, ag, ah, age, ctx);
     if (f.kind === "fireball") fireballBlast(dot, ax, ag, ah, age);
     if (f.kind === "gust") gustHit(dot, ax, ag, ah, age);
+    if (f.kind === "tidalWave") tidalHit(dot, ax, ag, ah, age);
   }
 }
 
@@ -957,11 +959,16 @@ function electrocute(dot: Dot, ax: number, ag: number, ah: number, age: number, 
 
 /** A projectile in flight, centred on screen (x, y) and heading dir (1 = right). Returns false if it has no pixel art yet. */
 export function drawProjectile(ctx: CanvasRenderingContext2D, fx: string, x: number, y: number, dir: number, t: number): boolean {
-  if (fx !== "fireball" && fx !== "wind") return false;
+  if (fx !== "fireball" && fx !== "wind" && fx !== "water") return false;
   const dot = dotter(ctx);
   const cx = Math.round(x / P);
   const cy = Math.round(y / P);
   const frame = Math.floor(t * FPS * 2);
+  // A wave rolls along the floor: y is the ground under it.
+  if (fx === "water") {
+    wave(dot, cx, cy, 13, dir, frame);
+    return true;
+  }
   if (fx === "wind") {
     windBlade(dot, cx, cy, dir, frame);
     return true;
@@ -1113,5 +1120,87 @@ function curl(dot: Dot, x: number, y: number, t: number, seed: number): void {
     const a = s * 0.5 - Math.PI / 2;
     const r = 4.5 - s * 0.25;
     dot(x + Math.round(Math.cos(a) * r), y - 4 + Math.round(Math.sin(a) * r), WIND[(s + seed) % 2]);
+  }
+}
+
+/** A breaking wave on the floor at ground gy, crest at x cx, h art pixels tall, rolling toward dir. */
+function wave(dot: Dot, cx: number, gy: number, h: number, dir: number, frame: number): void {
+  if (h < 2) return;
+  const back = Math.round(h * 1.1);
+  // Body: a concave slope rising to a sharp crest, foam on top, a light band under the crest.
+  for (let c = -back; c <= 0; c++) {
+    const tall = Math.round(h * (1 + c / back) ** 1.4);
+    for (let y = 0; y < tall; y++) {
+      const fromTop = tall - 1 - y;
+      let shade = fromTop === 0 ? 0 : fromTop === 1 ? 1 : y < 2 ? 5 : c > -3 ? 2 : fromTop < h * 0.3 ? 3 : 4;
+      if (fromTop > 1 && hash(c, y, frame) < 0.06) shade = 1;
+      dot(cx + dir * c, gy - 1 - y, WAVE[shade]);
+    }
+  }
+  // Lip: curls forward and down over a hollow barrel, thinning as it goes.
+  const lip = Math.max(2, Math.round(h * 0.5));
+  for (let i = 1; i <= lip; i++) {
+    const k = i / lip;
+    const y0 = gy - h + Math.round(h * 0.55 * k * k);
+    const th = Math.max(1, Math.round(h * 0.3 * (1 - k)) + 1);
+    for (let r = 0; r < th; r++) dot(cx + dir * i, y0 + r, WAVE[r === 0 ? 0 : r === 1 ? 1 : r === th - 1 ? 3 : 2]);
+    // The lip's tip drips a curtain of spray down into the barrel.
+    if (i === lip) for (let d = 1; d < h * 0.4; d++) if (hash(d, frame, 107) > 0.55) dot(cx + dir * i, y0 + th + d, WAVE[1]);
+  }
+  // Whitewater churns at the foot of the face.
+  const foot = Math.max(1, Math.round(h * 0.15));
+  for (let c = 1; c <= lip + 1; c++) {
+    for (let y = 0; y < foot + 1 - Math.floor(c / 3); y++) if (hash(c, y, frame + 3) > 0.25) dot(cx + dir * c, gy - 1 - y, y === 0 ? WAVE[2] : WAVE[(c + y + frame) % 2]);
+  }
+  // Spray flies off the crest.
+  for (let i = 0; i < 6; i++) {
+    if (hash(i, frame, 101) < 0.4) continue;
+    dot(cx + dir * Math.round(hash(i, frame, 102) * 7 - 3), gy - h - 1 - Math.round(hash(i, frame, 103) * 4), i % 2 ? WAVE[0] : WAVE[1]);
+  }
+}
+
+/** Tidal Wave lands: the wave rears up over the mob, crashes down on it and splashes out into foam and a draining sheet of water. */
+function tidalHit(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const dur = SPELL_FX_DUR.tidalWave;
+  const top = ah + 8;
+  // Rear up, then crash: the crest rolls on through the mob as it falls.
+  if (age < 0.55) {
+    const k = age / 0.55;
+    const h = k < 0.45 ? Math.round(13 + (top - 13) * easeOut(k / 0.45)) : k < 0.7 ? top : Math.round(top * (1 - (k - 0.7) / 0.3) ** 1.5);
+    wave(dot, ax - 14 + Math.round(k * 22), ag, h, 1, frame);
+  }
+  // Splash: droplets fly up and rain back down.
+  for (let i = 0; i < 18; i++) {
+    const t = age - 0.42 - hash(i, 0, 104) * 0.06;
+    if (t < 0) continue;
+    const a = -Math.PI * (0.15 + hash(i, 1, 104) * 0.7);
+    const v = 40 + hash(i, 2, 104) * 50;
+    const x = ax + 4 + Math.round(Math.cos(a) * v * t);
+    const y = ag - Math.round(ah * 0.7) + Math.round(Math.sin(a) * v * t + 120 * t * t);
+    if (y >= ag) continue;
+    dot(x, y, i % 3 ? WAVE[1] : WAVE[0], 1, i % 4 ? 1 : 2);
+  }
+  // A sheet of water runs out along the floor, foam edges racing away, and drains.
+  if (age > 0.42) {
+    const t = age - 0.42;
+    const left = dur - 0.42;
+    const reach = Math.round(10 + easeOut(Math.min(1, t / 0.35)) * 24);
+    const drain = Math.max(0, (t / left - 0.3) / 0.7);
+    for (let c = -reach; c <= reach; c++) {
+      const edge = Math.abs(c) >= reach - 1;
+      if (hash(c, frame, 105) < drain * 1.1 - (edge ? 0.3 : 0)) continue;
+      const depth = edge ? 1 : Math.max(1, Math.round((1 - Math.abs(c) / reach) * 3 * (1 - drain)));
+      for (let y = 0; y < depth; y++) {
+        const top = y === depth - 1;
+        dot(ax + 4 + c, ag - 1 - y, edge ? WAVE[0] : top ? ((c + frame) % 5 === 0 ? WAVE[0] : WAVE[2]) : WAVE[3]);
+      }
+    }
+    // Foam caps bob on the surge.
+    for (let i = 0; i < 4; i++) {
+      if (hash(i, frame >> 1, 106) < drain) continue;
+      const x = ax + 4 + Math.round((hash(i, 0, 106) - 0.5) * reach * 1.6);
+      dot(x, ag - 3, WAVE[0], 2, 1);
+    }
   }
 }
