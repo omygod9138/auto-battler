@@ -24,7 +24,7 @@ export interface SpriteSet {
   skills: Partial<Record<SkillId, Clip>>;
   /** Height of the still's opaque art above the feet. */
   visible: number;
-  /** Extra enlargement so art drawn smaller than the others still stands as tall. */
+  /** Extra enlargement so art drawn smaller than the others still stands as tall, or a mob at its own height. */
   scale: number;
 }
 
@@ -65,6 +65,13 @@ const sets = new Map<string, SpriteSet>();
 
 /** Art whose figure is shorter than this many pixels is scaled up to it (the mage's height; the warrior is 59). */
 const MIN_VISIBLE = 57;
+
+/** Mobs stand at a set height in art pixels, whatever size PixelLab drew them: the procedural rigs'
+ * heights relative to the heroes, so a slime stays knee-high and the Jötunn towers. */
+const MOB_HEIGHT: Record<string, number> = {
+  slime: 26, wolf: 32, skeleton: 54, orc: 67, wraith: 62, troll: 78,
+  draugr: 75, drake: 91, jotunn: 96,
+};
 
 export function sprite(id: string): SpriteSet | undefined {
   return sets.get(id);
@@ -136,7 +143,7 @@ async function loadClip(urls: string[]): Promise<Clip> {
   return { frames, foot: opaqueRows(frames[0]).bottom + 1 };
 }
 
-async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | null> {
+async function loadSet(id: string, dir: string, meta: PixelLabExport): Promise<SpriteSet | null> {
   const url = (path: string) => pngs[`${dir}/${path}`];
   const states = meta.states ?? [];
   const anims: SpriteSet["anims"] = {};
@@ -165,7 +172,8 @@ async function loadSet(dir: string, meta: PixelLabExport): Promise<SpriteSet | n
   if (!still) return null;
   const { top, bottom } = opaqueRows(still.frames[0]);
   const visible = bottom + 1 - top;
-  return { still, anims, skills, visible, scale: Math.max(1, MIN_VISIBLE / visible) };
+  const scale = MOB_HEIGHT[id] ? MOB_HEIGHT[id] / visible : Math.max(1, MIN_VISIBLE / visible);
+  return { still, anims, skills, visible, scale };
 }
 
 let loading: Promise<void> | null = null;
@@ -177,7 +185,7 @@ export function loadSprites(): Promise<void> {
       const dir = path.slice(0, path.lastIndexOf("/"));
       const id = dir.slice(dir.lastIndexOf("/") + 1);
       try {
-        const set = await loadSet(dir, meta);
+        const set = await loadSet(id, dir, meta);
         if (set) sets.set(id, set);
       } catch (err) {
         // A broken export falls back to the procedural character.
