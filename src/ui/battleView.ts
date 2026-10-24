@@ -1,6 +1,7 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
+import { drawSpellFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
 import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
@@ -96,6 +97,8 @@ class Scene {
   bursts: Burst[] = [];
   floaters: Floater[] = [];
   shots: Shot[] = [];
+  /** Pixel-art spell effects on the mob. */
+  spells: SpellFx[] = [];
   shake = 0;
   now = 0;
   /** Wall-clock seconds, which keep running through a combo freeze. */
@@ -234,6 +237,11 @@ export function playBattle(
           if (scene.banner?.text === e.label && scene.real - scene.banner.born < COMBO_PAUSE + 0.6) break;
           scene.banner = { text: e.label, born: scene.real };
           scene.add({ kind: "flash", dur: 0.25, x: 0, y: 0, color: "rgba(255,210,80,0.35)", size: 0, dir });
+          const kind = e.reaction && REACTION_FX[e.reaction];
+          if (kind) {
+            scene.spells.push({ kind, born: scene.now });
+            scene.shake = Math.max(scene.shake, 6);
+          }
           break;
         }
         if (e.label === "Wall Slam!") {
@@ -384,6 +392,7 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
   scene.bursts = scene.bursts.filter((b) => scene.now - b.born < b.dur);
   scene.floaters = scene.floaters.filter((f) => scene.now - f.born < 1.1);
   scene.shots = scene.shots.filter((s) => scene.now - s.born < (s.fx === "meteor" ? 0.32 : 0.18));
+  scene.spells = scene.spells.filter((s) => scene.now - s.born < SPELL_FX_DUR[s.kind]);
   for (const f of scene.ambient) {
     f.x += f.vx * dt + Math.sin(scene.now + f.y * 0.05) * 0.2;
     f.y += f.vy * dt;
@@ -482,6 +491,7 @@ function draw(
   }
 
   drawShots(ctx, scene, battle, look);
+  drawSpellFx(ctx, scene.spells, t, fx(battle, "mob"), GROUND);
   drawBursts(ctx, scene);
   drawParticles(ctx, scene.particles);
   ctx.restore();

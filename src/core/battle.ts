@@ -40,7 +40,7 @@ export type BattleEvent =
   | { t: number; type: "dot"; target: Side; amount: number; kind: "poison" | "burn" | "thorns" }
   | { t: number; type: "heal"; target: Side; amount: number }
   | { t: number; type: "dodge"; target: Side }
-  | { t: number; type: "status"; target: Side; label: string; reaction?: boolean }
+  | { t: number; type: "status"; target: Side; label: string; /** Name of the element reaction this announces. */ reaction?: string }
   /** A skill starts winding up; its hit lands at battle time `at`. combo is the label it will complete. */
   | { t: number; type: "windup"; target: Side; skill: SkillId; at: number; combo?: string };
 
@@ -663,7 +663,7 @@ export class Battle {
     if (this.derived && r.mix[0] === this.derived.kind) this.derived = null;
     else this.mark = null;
     const amp = N.attunement(this.lv("attunement"));
-    this.emit({ t: this.time, type: "status", target: "mob", label: `${r.icon} ${r.name}!`, reaction: true });
+    this.emit({ t: this.time, type: "status", target: "mob", label: `${r.icon} ${r.name}!`, reaction: r.name });
     if (r.burst) this.spell(this.hero.s.dmg * r.burst * amp, r.stun ? "lightning" : r.name === "Eruption" ? "meteor" : "bolt", r.name);
     if (r.stun) this.mob.stun = Math.max(this.mob.stun, r.stun * amp);
     if (r.root) this.mob.root = Math.max(this.mob.root, r.root * amp);
