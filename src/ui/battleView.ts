@@ -2,6 +2,7 @@ import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } fr
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
 import { drawBurnFx, drawDerivedFx, drawProjectile, drawRootFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
+import { drawMeleeFx, meleeFxDur, preloadMeleeFx, type MeleeFx } from "./meleeFx";
 import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
@@ -99,6 +100,8 @@ class Scene {
   shots: Shot[] = [];
   /** Pixel-art spell effects on the mob. */
   spells: SpellFx[] = [];
+  /** Pixel-art Warrior melee effects on the mob. */
+  melee: MeleeFx[] = [];
   shake = 0;
   now = 0;
   /** Wall-clock seconds, which keep running through a combo freeze. */
@@ -153,6 +156,7 @@ export function playBattle(
 
   const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   const scene = new Scene();
+  preloadMeleeFx();
   const heights: Record<Side, number> = { hero: height(look.hero), mob: height(look.mob) };
   const layers = new LayerCache();
   let seen = 0;
@@ -184,7 +188,12 @@ export function playBattle(
           const wound = scene.anim[attacker].skill?.id === e.skill && scene.anim[attacker].skill?.phase === "windup";
           scene.anim[attacker].skill = { id: e.skill, at: scene.now, phase: wound ? "strike" : "full", simAt: e.t, simEnd: e.t };
         }
-        if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
+        if (e.fx === "slash" && !e.skill && target === "mob") {
+          // A plain sword swing: a steel crescent across the mob, then a hit flash where the blade meets it.
+          scene.anim[attacker].lunge = scene.now;
+          scene.melee.push({ kind: "slash", born: scene.now, big: e.crit });
+          scene.melee.push({ kind: "hit", born: scene.now + 0.06, big: e.crit, dx: -12 });
+        } else if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
           scene.anim[attacker].lunge = scene.now;
           scene.add({ kind: "slash", dur: 0.22, x: x - dir * 10, y, color: e.fx === "claw" ? "#ff9f9f" : "#ffffff", size: big ? 46 : 34, dir });
           scene.burst(x, y, big ? 16 : 8, target === "mob" ? "#ffd9a0" : "#ff5a4a", 180);
@@ -396,6 +405,7 @@ function update(scene: Scene, battle: Battle, dt: number, reduced: boolean): voi
   scene.floaters = scene.floaters.filter((f) => scene.now - f.born < 1.1);
   scene.shots = scene.shots.filter((s) => scene.now - s.born < (s.fx === "meteor" ? 0.32 : 0.18));
   scene.spells = scene.spells.filter((s) => scene.now - s.born < SPELL_FX_DUR[s.kind]);
+  scene.melee = scene.melee.filter((m) => scene.now - m.born < meleeFxDur(m.kind));
   for (const f of scene.ambient) {
     f.x += f.vx * dt + Math.sin(scene.now + f.y * 0.05) * 0.2;
     f.y += f.vy * dt;
@@ -499,6 +509,7 @@ function draw(
   if (battle.stoneRooted && battle.mob.hp > 0) drawRootFx(ctx, fx(battle, "mob"), GROUND, t);
   if (battle.burning && battle.mob.hp > 0) drawBurnFx(ctx, fx(battle, "mob"), GROUND, heights.mob, t);
   drawSpellFx(ctx, scene.spells, t, fx(battle, "mob"), GROUND, heights.mob);
+  drawMeleeFx(ctx, scene.melee, t, fx(battle, "mob"), GROUND, heights.mob);
   drawBursts(ctx, scene);
   drawParticles(ctx, scene.particles);
   ctx.restore();
