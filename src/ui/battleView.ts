@@ -1,7 +1,7 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
-import { drawSpellFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
+import { drawDerivedFx, drawSpellFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
 import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
@@ -191,7 +191,8 @@ export function playBattle(
         } else {
           scene.anim[attacker].lunge = scene.now;
           scene.shots.push({ born: scene.now, from: attacker, fx: e.fx });
-          impact(scene, e.fx, x, y, big);
+          // Reactions with pixel art draw their own hit.
+          if (!(e.label && REACTION_FX[e.label])) impact(scene, e.fx, x, y, big);
         }
         if (e.fx === "meteor") scene.shake = Math.max(scene.shake, 14);
         else if (big) scene.shake = Math.max(scene.shake, e.crit ? 7 : 5);
@@ -438,7 +439,7 @@ function draw(
     ctx.fillText("🪤", sx, GROUND + 20 + (battle.mob.root > 0 ? Math.sin(t * 40) * 2 : 0));
   }
 
-  drawElements(ctx, battle, t);
+  drawElements(ctx, battle, t, heights.mob);
 
   for (const side of ["hero", "mob"] as const) {
     const f = side === "hero" ? battle.hero : battle.mob;
@@ -491,7 +492,7 @@ function draw(
   }
 
   drawShots(ctx, scene, battle, look);
-  drawSpellFx(ctx, scene.spells, t, fx(battle, "mob"), GROUND);
+  drawSpellFx(ctx, scene.spells, t, fx(battle, "mob"), GROUND, heights.mob);
   drawBursts(ctx, scene);
   drawParticles(ctx, scene.particles);
   ctx.restore();
@@ -582,7 +583,7 @@ function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 
 }
 
 /** Mage element state: ground zones under the mob, clouds around it, and the waiting mark above it. */
-function drawElements(ctx: CanvasRenderingContext2D, battle: Battle, t: number): void {
+function drawElements(ctx: CanvasRenderingContext2D, battle: Battle, t: number, mobH: number): void {
   const d = battle.derived;
   if (d) {
     const def = DERIVED[d.kind];
@@ -601,7 +602,7 @@ function drawElements(ctx: CanvasRenderingContext2D, battle: Battle, t: number):
         ctx.ellipse((x0 + x1) / 2, GROUND + 6, (x1 - x0) / 3, 4, 0, 0, Math.PI * 2);
         ctx.fill();
       }
-    } else {
+    } else if (!drawDerivedFx(ctx, d.kind, fx(battle, "mob"), GROUND, mobH, t, fade)) {
       ctx.globalAlpha = fade;
       ctx.font = "26px sans-serif";
       ctx.textAlign = "center";
