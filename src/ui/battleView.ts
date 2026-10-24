@@ -458,6 +458,8 @@ function draw(
     const x = fx(battle, side) + lunge + recoil;
     const enraged = side === "mob" && look.mobBoss && f.hp < f.s.maxHp / 2 && f.hp > 0;
     const frozen = side === "mob" && f.stun > 0 && battle.events.some((e) => e.type === "status" && e.label.endsWith("Obsidian!") && battle.time - e.t < 3);
+    // Electrocuted: the mob strobes white while the current runs through it.
+    const shocked = side === "mob" && f.stun > 0 && battle.events.some((e) => e.type === "status" && e.label.endsWith("Electrocute!") && battle.time - e.t < 1.4);
     const id = side === "hero" ? look.hero : look.mob;
     const layer = layers.get(side);
     const death = a.deathAt === null ? null : Math.min(1, (t - a.deathAt) / 0.7);
@@ -473,7 +475,7 @@ function draw(
     });
     drawFighter(ctx, layer, {
       x, facing, h: heights[side],
-      flash: hurt >= 0 && hurt < 0.5 ? 1 - hurt * 2 : 0,
+      flash: shocked && Math.floor(t * 12) % 3 === 0 ? 0.8 : hurt >= 0 && hurt < 0.5 ? 1 - hurt * 2 : 0,
       death,
       animatedDeath: hasDeathAnim(id),
       fall: deathFall(id),
