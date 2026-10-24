@@ -1,7 +1,7 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
-import { drawDerivedFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
+import { drawBurnFx, drawDerivedFx, drawProjectile, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
 import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
@@ -193,7 +193,8 @@ export function playBattle(
           // Eruption bursts up from the ground, so it skips the falling meteor.
           if (!(e.fx === "meteor" && e.label && REACTION_FX[e.label])) scene.shots.push({ born: scene.now, from: attacker, fx: e.fx });
           // Reactions with pixel art draw their own hit.
-          if (!(e.label && REACTION_FX[e.label])) impact(scene, e.fx, x, y, big);
+          if (e.skill === "fireball") scene.spells.push({ kind: "fireball", born: scene.now + 0.16 });
+          else if (!(e.label && REACTION_FX[e.label])) impact(scene, e.fx, x, y, big);
         }
         if (e.fx === "meteor") scene.shake = Math.max(scene.shake, 14);
         else if (big) scene.shake = Math.max(scene.shake, e.crit ? 7 : 5);
@@ -495,6 +496,7 @@ function draw(
   }
 
   drawShots(ctx, scene, battle, look);
+  if (battle.burning && battle.mob.hp > 0) drawBurnFx(ctx, fx(battle, "mob"), GROUND, heights.mob, t);
   drawSpellFx(ctx, scene.spells, t, fx(battle, "mob"), GROUND, heights.mob);
   drawBursts(ctx, scene);
   drawParticles(ctx, scene.particles);
@@ -825,8 +827,7 @@ function drawShots(ctx: CanvasRenderingContext2D, scene: Scene, battle: Battle, 
         glow(ctx, x, y, 12, "#e2ccff");
         break;
       case "fireball":
-        trail(ctx, x, y, x - Math.sign(to - from) * 40, y, "#ff7b2a", 14);
-        glow(ctx, x, y, 16, "#ffd27a");
+        drawProjectile(ctx, "fireball", x, y, dir, scene.now);
         if (Math.random() < 0.6) scene.particles.push({ x, y, vx: rand(-20, 20), vy: rand(-40, -10), life: 0, max: 0.4, size: 4, color: "#ffb347", gravity: -50 });
         break;
       case "water":

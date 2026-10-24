@@ -158,6 +158,11 @@ export class Battle {
     return (Object.keys(BAND_OF) as SkillId[]).some((id) => this.lv(id) > 0);
   }
 
+  /** Whether the mob is on fire (Fireball burn). */
+  get burning(): boolean {
+    return this.burn.length > 0;
+  }
+
   /** The Ranger band the mob is in now. */
   get band(): Band {
     return bandAt(this.distance);
