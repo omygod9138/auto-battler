@@ -195,7 +195,7 @@ export function playBattle(
           scene.anim[attacker].lunge = scene.now;
           scene.melee.push({ kind: "slash", born: scene.now, big: e.crit });
           scene.melee.push({ kind: "hit", born: scene.now + 0.06, big: e.crit, dx: -12 });
-        } else if (e.skill === "heavyStrike" || e.skill === "shieldBash") {
+        } else if (e.skill === "heavyStrike" || e.skill === "shieldBash" || e.skill === "charge") {
           // These skills draw their own sprite effects in skillImpact.
           scene.anim[attacker].lunge = scene.now;
         } else if (e.fx === "slash" || e.fx === "claw" || e.fx === "bash") {
@@ -596,9 +596,12 @@ function skillImpact(scene: Scene, skill: SkillId, x: number, y: number, dir: 1 
       scene.shake = Math.max(scene.shake, combo ? 14 : 10);
       break;
     case "charge":
-      scene.add({ kind: "ring", dur: 0.5, x: hit, y, color: "#ffd34d", size: 90, dir });
-      scene.burst(hit, y, 30, "#ffe08a", 300, 250, 5);
-      scene.shake = Math.max(scene.shake, 11);
+      // The dash ends in a gold lance streak through the hero's path and a burst where it lands.
+      // As the Kick → Charge combo it hits bigger with a gold screen flash.
+      scene.melee.push({ kind: "chargeStreak", born: scene.now, big: combo, dx: combo ? -80 : -56 });
+      scene.melee.push({ kind: "hit", born: scene.now + 0.04, big: combo, dx: -14 });
+      if (combo) scene.add({ kind: "flash", dur: 0.18, x: 0, y: 0, color: "rgba(255,210,80,0.4)", size: 0, dir });
+      scene.shake = Math.max(scene.shake, combo ? 14 : 11);
       break;
     case "spartanKick":
       scene.add({ kind: "ring", dur: 0.35, x: hit, y: y + 16, color: "#ffffff", size: 60, dir });
