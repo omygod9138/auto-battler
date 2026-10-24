@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay" | "glass" | "lava" | "steam" | "eruption" | "obsidian" | "electrocute";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam", Eruption: "eruption", Obsidian: "obsidian" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay", Glass: "glass", Lava: "lava", Steam: "steam", Eruption: "eruption", Obsidian: "obsidian", Electrocute: "electrocute" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3, glass: 1.2, lava: 1.0, steam: 1.0, eruption: 1.6, obsidian: 2.4, electrocute: 1.7 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -68,6 +68,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "steam") steamBurst(dot, ax, ag, ah, age);
     if (f.kind === "eruption") eruption(dot, ax, ag, ah, age);
     if (f.kind === "obsidian") obsidian(dot, ax, ag, ah, age);
+    if (f.kind === "electrocute") electrocute(dot, ax, ag, ah, age, ctx);
   }
 }
 
@@ -866,4 +867,88 @@ function obsidian(dot: Dot, ax: number, ag: number, ah: number, age: number): vo
   });
   // The prison's first moment: a flash of sparks where the spikes snap shut.
   if (age > 0.4 && age < 0.55) for (let i = 0; i < 6; i++) dot(ax - 10 + Math.round(hash(i, frame, 78) * 20), ag - Math.round(ah * (0.3 + hash(i, 5, 78) * 0.5)), OBSIDIAN[4]);
+}
+
+/** A jagged arc of current from (x0,y0) to (x1,y1), re-rolled each frame. */
+function arc(dot: Dot, x0: number, y0: number, x1: number, y1: number, frame: number, seed: number): void {
+  const n = Math.max(2, Math.round(Math.hypot(x1 - x0, y1 - y0) / 3));
+  let px = x0;
+  let py = y0;
+  for (let k = 1; k <= n; k++) {
+    const f = k / n;
+    const jitter = k < n ? (hash(seed, k, frame) - 0.5) * 6 : 0;
+    const nx = Math.round(x0 + (x1 - x0) * f + jitter * (y1 - y0 === 0 ? 0 : 1));
+    const ny = Math.round(y0 + (y1 - y0) * f + jitter * (x1 - x0 === 0 ? 0 : 0.6));
+    const steps = Math.max(Math.abs(nx - px), Math.abs(ny - py), 1);
+    for (let j = 0; j < steps; j++) {
+      const x = Math.round(px + ((nx - px) * j) / steps);
+      const y = Math.round(py + ((ny - py) * j) / steps);
+      dot(x, y, BOLT[0]);
+      dot(x + 1, y, BOLT[2]);
+    }
+    px = nx;
+    py = ny;
+  }
+}
+
+/** Storm + Water: the water soaks the mob and the storm cloud dumps everything into it at once.
+ * Bolts rain down, current cages the soaked mob and crackles through the puddle while it's stunned. */
+function electrocute(dot: Dot, ax: number, ag: number, ah: number, age: number, ctx: CanvasRenderingContext2D): void {
+  const frame = Math.floor(age * FPS);
+  const dur = SPELL_FX_DUR.electrocute;
+  const top = ag - ah - 18;
+  const fade = Math.max(0, (age - (dur - 0.35)) / 0.35);
+  // The storm cloud sinks low and drains away.
+  if (age < 0.9) cloud(dot, ax, top - 4 + Math.round(age * 6), Math.round(12 * (1 - age / 0.9)) + 2, frame);
+  // A splash of water drenches the mob.
+  if (age < 0.35) {
+    for (let i = 0; i < 14; i++) {
+      const a = hash(i, 1, 81) * Math.PI;
+      const t = age;
+      const x = ax + Math.round(Math.cos(a) * (6 + t * 60));
+      const y = ag - Math.round(ah * 0.6) - Math.round(Math.sin(a) * t * 50 - 140 * t * t);
+      if (y < ag) dot(x, y, i % 3 ? WATER[1] : WATER[0], 1, 2);
+    }
+  }
+  // A wet puddle spreads under it, current skittering across.
+  const hw = Math.round(14 * Math.min(1, age / 0.25));
+  for (let c = -hw; c <= hw; c++) {
+    if (hash(c, 2, 82) < fade) continue;
+    dot(ax + c, ag, Math.abs(c) > hw - 2 ? WATER[2] : (c + frame) % 5 === 0 ? WATER[0] : WATER[1]);
+  }
+  if (fade < 1) for (let i = 0; i < 2; i++) {
+    const x0 = ax - hw + Math.round(hash(i, frame, 83) * hw);
+    if (hash(i, frame, 84) > 0.4) arc(dot, x0, ag - 1, x0 + 6 + Math.round(hash(i, frame, 85) * 8), ag - 1, frame, i + 10);
+  }
+  // Three bolts slam down one after another.
+  for (let b = 0; b < 3; b++) {
+    const at = 0.12 + b * 0.12;
+    if (age < at || age > at + 0.1) continue;
+    if (frame % 2 === 0) {
+      ctx.fillStyle = "rgba(220,235,255,0.25)";
+      ctx.fillRect(-50, -50, 2000, 1000);
+    }
+    const bx = ax + (b - 1) * 4;
+    arc(dot, bx + Math.round((hash(b, 0, 86) - 0.5) * 8), top + 6, bx, ag - Math.round(ah * 0.5), frame, b + 20);
+  }
+  // The cage: arcs leap between points round the body, flickering on and off.
+  if (age > 0.15 && fade < 1) {
+    const pts: [number, number][] = [];
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2 + age * 2;
+      pts.push([ax + Math.round(Math.cos(a) * 9), ag - Math.round(ah * 0.5) + Math.round(Math.sin(a) * ah * 0.45)]);
+    }
+    for (let i = 0; i < pts.length; i++) {
+      if (hash(i, frame, 87) < 0.35 + fade * 0.5) continue;
+      const [x0, y0] = pts[i];
+      const [x1, y1] = pts[(i + 1 + (frame % 2)) % pts.length];
+      arc(dot, x0, y0, x1, y1, frame, i + 30);
+    }
+    // Sparks pop off where the current touches.
+    for (let i = 0; i < 6; i++) {
+      if (hash(i, frame, 88) < 0.5) continue;
+      const [x, y] = pts[i % pts.length];
+      dot(x + Math.round((hash(i, frame, 89) - 0.5) * 6), y + Math.round((hash(i, frame, 90) - 0.5) * 6), BOLT[1]);
+    }
+  }
 }
