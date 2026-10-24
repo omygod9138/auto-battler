@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm" | "mud" | "plasma" | "clay";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm", Mud: "mud", Plasma: "plasma", Clay: "clay" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1, mud: 1.0, plasma: 1.1, clay: 3 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -34,6 +34,8 @@ const RAIN = "#8fb8e0";
 const BOLT = ["#ffffff", "#fff59a", "#9fd8ff"];
 const MUD = ["#2a1c12", "#4a3322", "#6e4c2c", "#94703f", "#d8c09a", "#7f8c8a"];
 const PLASMA = ["#ffffff", "#ffd6ff", "#ff7ae0", "#c23cff", "#5a1a9a"];
+const CLAY = ["#4a2214", "#7e3e22", "#b0603a", "#d98c5a", "#f2be92"];
+const STEAM = ["#f2f4f8", "#c9ced8"];
 const WATER = ["#e6f6ff", "#8fd0ff", "#4a90d0"];
 const SAND = ["#f4e2a8", "#d9b46a", "#b08848", "#7a5a32"];
 
@@ -57,6 +59,7 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (f.kind === "sandstorm") sandstorm(dot, ax, ag, ah, age);
     if (f.kind === "mud") mudSplash(dot, ax, ag, ah, age);
     if (f.kind === "plasma") plasma(dot, ax, ag, ah, age);
+    if (f.kind === "clay") clay(dot, ax, ag, ah, age);
   }
 }
 
@@ -426,3 +429,75 @@ function plasma(dot: Dot, ax: number, ag: number, ah: number, age: number): void
 }
 
 const easeOut = (k: number) => 1 - (1 - k) ** 3;
+
+/** Mud + Fire: the fire bakes the mud puddle into clay, which sets hard round the mob's legs (rooted), then crumbles. */
+function clay(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const dur = SPELL_FX_DUR.clay;
+  const hw = 16;
+  // Baked ground: a cracked terracotta plate where the puddle was.
+  const plateFade = age > dur - 0.4 ? (age - (dur - 0.4)) / 0.4 : 0;
+  for (let dy = -1; dy <= 3; dy++) {
+    const k = (dy - 1) / 3;
+    const w = Math.round(hw * Math.sqrt(Math.max(0, 1 - k * k)));
+    for (let c = -w; c <= w; c++) {
+      if (hash(c, dy, 31) < plateFade) continue;
+      const crack = hash(c >> 1, dy, 32) > 0.85 || (c + dy * 3) % 9 === 0;
+      const hot = age < 0.35 && hash(c, dy, frame) > 0.5;
+      dot(ax + c, ag + dy, hot ? FIRE[2] : crack ? CLAY[0] : dy === -1 ? CLAY[3] : CLAY[2]);
+    }
+  }
+  // Flames lick along the puddle as it bakes.
+  if (age < 0.4) {
+    for (let i = 0; i < 10; i++) {
+      const x = ax - hw + Math.round(hash(i, 1, 1) * hw * 2);
+      const h = 2 + Math.round(hash(i, frame, 2) * 4 * (1 - age / 0.4));
+      for (let y = 0; y < h; y++) dot(x, ag - 2 - y, FIRE[Math.min(4, y + (hash(i, y, frame) > 0.5 ? 1 : 0))]);
+    }
+  }
+  // Steam hisses off as the water cooks out.
+  if (age > 0.1 && age < 0.9) {
+    for (let i = 0; i < 8; i++) {
+      const t = age - 0.1 - hash(i, 3, 3) * 0.3;
+      if (t < 0) continue;
+      const x = ax - hw + Math.round(hash(i, 4, 4) * hw * 2) + Math.round(Math.sin(t * 6 + i) * 2);
+      const y = ag - 3 - Math.round(t * 50);
+      const r = 1 + Math.round(t * 3);
+      if (t < 0.6) disc(dot, x, y, r, (d, px, py) => (hash(px, py, frame) > 0.3 + t ? (d < 0.5 ? STEAM[0] : STEAM[1]) : null));
+    }
+  }
+  // The clay shell climbs the legs, holds, then cracks apart and falls.
+  const rise = Math.min(1, Math.max(0, (age - 0.25) / 0.3));
+  const shellH = Math.round(ah * 0.42 * rise);
+  const crumble = Math.max(0, (age - (dur - 0.45)) / 0.45);
+  for (let y = 0; y < shellH; y++) {
+    const w = Math.round(8 - (y / Math.max(1, ah * 0.42)) * 3);
+    for (let c = -w; c <= w; c++) {
+      // Lumpy edge.
+      if (Math.abs(c) === w && hash(c, y, 33) > 0.5) continue;
+      let gy = ag - 1 - y;
+      let gx = ax + c;
+      if (crumble > 0) {
+        // Chunks break off top-first and drop.
+        const start = (1 - y / shellH) * 0.5 + hash(c >> 1, y >> 1, 34) * 0.3;
+        const f = crumble - start;
+        if (f > 0) {
+          gy += Math.round(f * f * 120);
+          gx += Math.round((hash(c >> 1, y >> 1, 35) - 0.5) * f * 20);
+          if (gy >= ag) continue;
+        }
+      }
+      // Two jagged cracks open once it has set.
+      const crack = rise === 1 && age > 0.7 && (c === Math.round(Math.sin(y * 0.9) * 1.5) - 2 || (y > 3 && c === 3 + Math.round(Math.cos(y * 1.3))));
+      const lit = c < -w + 2;
+      const dark = c > w - 2;
+      const n = hash(c, y, 38);
+      dot(gx, gy, crack ? CLAY[0] : lit ? CLAY[4] : dark ? CLAY[1] : n > 0.8 ? CLAY[3] : n < 0.12 ? CLAY[1] : CLAY[2]);
+    }
+  }
+  // Now and then a crumb flakes off the shell while it holds.
+  if (rise === 1 && crumble === 0 && frame % 7 < 3) {
+    const t = (frame % 7) / 3;
+    dot(ax + (frame % 2 ? 7 : -8), ag - 4 - Math.round(hash(frame >> 3, 1, 37) * shellH * 0.6) + Math.round(t * 6), CLAY[1]);
+  }
+}
