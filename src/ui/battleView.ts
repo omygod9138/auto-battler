@@ -1,7 +1,7 @@
 import { ARENA, TICK, type Battle, type BattleEvent, type FxKind, type Side } from "../core/battle";
 import { BAND_EDGE, BAND_NAME, DERIVED, ELEMENT_ICON, SKILLS, type Band, type SkillId } from "../core/skills";
 import { backdrop, PIXEL } from "./backdrop";
-import { drawBurnFx, drawDerivedFx, drawProjectile, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
+import { drawBurnFx, drawDerivedFx, drawProjectile, drawRootFx, drawSpellFx, drawZoneFx, REACTION_FX, SPELL_FX_DUR, type SpellFx } from "./spellFx";
 import { characterHeight, deathFall, drawCharacter, hasDeathAnim, muzzleHeight, pixelScale, type Fall, type Pose } from "./characters";
 
 const W = 880;
@@ -193,7 +193,7 @@ export function playBattle(
           // Eruption bursts up from the ground, so it skips the falling meteor.
           if (!(e.fx === "meteor" && e.label && REACTION_FX[e.label])) scene.shots.push({ born: scene.now, from: attacker, fx: e.fx });
           // Reactions with pixel art draw their own hit.
-          if (e.skill === "fireball" || e.skill === "gust" || e.skill === "tidalWave") scene.spells.push({ kind: e.skill, born: scene.now + 0.16 });
+          if (e.skill === "fireball" || e.skill === "gust" || e.skill === "tidalWave" || e.skill === "stoneSpike") scene.spells.push({ kind: e.skill, born: scene.now + 0.16 });
           else if (!(e.label && REACTION_FX[e.label])) impact(scene, e.fx, x, y, big);
         }
         if (e.fx === "meteor") scene.shake = Math.max(scene.shake, 14);
@@ -496,6 +496,7 @@ function draw(
   }
 
   drawShots(ctx, scene, battle, look);
+  if (battle.stoneRooted && battle.mob.hp > 0) drawRootFx(ctx, fx(battle, "mob"), GROUND, t);
   if (battle.burning && battle.mob.hp > 0) drawBurnFx(ctx, fx(battle, "mob"), GROUND, heights.mob, t);
   drawSpellFx(ctx, scene.spells, t, fx(battle, "mob"), GROUND, heights.mob);
   drawBursts(ctx, scene);
@@ -837,7 +838,7 @@ function drawShots(ctx: CanvasRenderingContext2D, scene: Scene, battle: Battle, 
         drawProjectile(ctx, "wind", x, y, dir, scene.now);
         break;
       case "stone":
-        glyph(ctx, "🪨", x, y, 20, 1);
+        drawProjectile(ctx, "stone", x, GROUND, dir, scene.now);
         break;
       default:
         break;

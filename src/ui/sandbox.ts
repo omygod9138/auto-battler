@@ -21,6 +21,7 @@ const PRESETS: { name: string; cls: ClassId; levels: SkillLevels }[] = [
   { name: "Warrior: Charge → Bash → Heavy", cls: "warrior", levels: { charge: 1, shieldBash: 1, heavyStrike: 1 } },
   { name: "Mage: Gust only", cls: "mage", levels: { gust: 1 } },
   { name: "Mage: Tidal Wave only", cls: "mage", levels: { tidalWave: 1 } },
+  { name: "Mage: Stone Spike only", cls: "mage", levels: { stoneSpike: 1 } },
   { name: "Mage: all four elements", cls: "mage", levels: { fireball: 1, gust: 1, tidalWave: 1, stoneSpike: 1 } },
   { name: "Mage: Fire + Earth (Lava)", cls: "mage", levels: { fireball: 1, stoneSpike: 1 } },
   { name: "Mage: Fire + Air (Wildfire)", cls: "mage", levels: { fireball: 1, gust: 1 } },
