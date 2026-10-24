@@ -2,7 +2,7 @@
 // Each effect is a pure function of its age, animated at a low frame rate like sprite art.
 import { PIXEL as P } from "./backdrop";
 
-export type SpellFxKind = "wildfire" | "storm";
+export type SpellFxKind = "wildfire" | "storm" | "sandstorm";
 
 /** An effect anchored to the mob: x follows it, so a knocked-back mob keeps its effect. */
 export interface SpellFx {
@@ -12,9 +12,9 @@ export interface SpellFx {
 }
 
 /** Effects by reaction name. */
-export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm" };
+export const REACTION_FX: Partial<Record<string, SpellFxKind>> = { Wildfire: "wildfire", Storm: "storm", Sandstorm: "sandstorm" };
 
-export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2 };
+export const SPELL_FX_DUR: Record<SpellFxKind, number> = { wildfire: 1.2, storm: 1.2, sandstorm: 1.1 };
 
 /** Animation frames per second; low on purpose so the flicker reads as pixel art. */
 const FPS = 12;
@@ -32,6 +32,7 @@ const SMOKE = ["#3d3236", "#5c4a4a"];
 const CLOUD = ["#3e4058", "#646884", "#9a9fbc", "#d2d6ea"];
 const RAIN = "#8fb8e0";
 const BOLT = ["#ffffff", "#fff59a", "#9fd8ff"];
+const SAND = ["#f4e2a8", "#d9b46a", "#b08848", "#7a5a32"];
 
 /** Fills whole art pixels on ctx. */
 const dotter = (ctx: CanvasRenderingContext2D): Dot => (gx, gy, color, w = 1, h = 1) => {
@@ -50,11 +51,18 @@ export function drawSpellFx(ctx: CanvasRenderingContext2D, list: SpellFx[], now:
     if (age < 0 || age >= SPELL_FX_DUR[f.kind]) continue;
     if (f.kind === "wildfire") wildfire(dot, ax, ag, age);
     if (f.kind === "storm") storm(dot, ax, ag, ah, age, ctx);
+    if (f.kind === "sandstorm") sandstorm(dot, ax, ag, ah, age);
   }
 }
 
 /** A lingering state left on the mob (not a ground zone), drawn until it runs out. Returns false if it has no pixel art yet. */
 export function drawDerivedFx(ctx: CanvasRenderingContext2D, kind: string, x: number, ground: number, h: number, t: number, fade: number): boolean {
+  if (kind === "sandstorm") {
+    ctx.globalAlpha = fade;
+    sandSwirl(dotter(ctx), Math.round(x / P), Math.round(ground / P), Math.round(h / P), t);
+    ctx.globalAlpha = 1;
+    return true;
+  }
   if (kind !== "storm") return false;
   const dot = dotter(ctx);
   ctx.globalAlpha = fade;
@@ -220,5 +228,59 @@ function wildfire(dot: Dot, ax: number, ag: number, age: number): void {
     const gy = ag - 4 - Math.round(t * (40 + seed * 30));
     if (gy < ag - 48) continue;
     dot(ax + Math.round(Math.cos(a) * rad), gy, hash(i, frame, 5) > 0.5 ? FIRE[1] : FIRE[2]);
+  }
+}
+
+/** Earth + Air: a wall of sand blasts in from the hero's side, pelting the mob with grit and shoving it back. */
+function sandstorm(dot: Dot, ax: number, ag: number, ah: number, age: number): void {
+  const frame = Math.floor(age * FPS);
+  const dur = SPELL_FX_DUR.sandstorm;
+  const fade = Math.max(0, (age - (dur - 0.35)) / 0.35);
+  // The dust front sweeps across the mob, then hangs as a dithered haze that thins out.
+  const front = ax - 30 + Math.round(Math.min(1, age / 0.25) * 42);
+  const span = ah + 6;
+  for (let y = 0; y < span; y++) {
+    const edge = front - Math.round(Math.abs(Math.sin(y * 0.4 + frame * 0.8)) * 4);
+    for (let x = front - 34; x < edge; x++) {
+      // Billowing top edge, so the haze isn't a box.
+      if (y > span * (0.7 + 0.3 * Math.sin(x * 0.25 + frame * 0.6))) continue;
+      const n = hash(x, y, frame);
+      // Denser near the ground and the front edge.
+      const dense = 0.05 + 0.35 * (1 - y / span) + 0.3 * (1 - (edge - x) / 34) - fade * 0.6;
+      if (n > dense) continue;
+      dot(x, ag - 1 - y, n < dense * 0.3 ? SAND[3] : n < dense * 0.7 ? SAND[2] : SAND[1]);
+    }
+  }
+  // Streaks of grit race left to right across it.
+  for (let i = 0; i < 26 * (1 - fade); i++) {
+    const speed = 90 + hash(i, 1, 2) * 80;
+    const x = ax - 40 + Math.round((age * speed + hash(i, 3, 4) * 80) % 80);
+    const y = ag - 2 - Math.round(hash(i, 5, 6) * span);
+    const len = 3 + Math.round(hash(i, 7, 8) * 4);
+    dot(x, y, i % 3 ? SAND[0] : SAND[1], len, 1);
+  }
+  // Pebbles tumble along with it.
+  for (let i = 0; i < 6 * (1 - fade); i++) {
+    const t = age - hash(i, 9, 1) * 0.3;
+    if (t < 0) continue;
+    const x = ax - 26 + Math.round(t * (70 + hash(i, 2, 9) * 40));
+    const y = ag - 3 - Math.round(hash(i, 4, 9) * ah * 0.8) + Math.round(Math.abs(Math.sin(t * 14 + i)) * -3);
+    dot(x, y, SAND[3], 2, 2);
+    dot(x, y, SAND[2]);
+  }
+}
+
+/** The sand left swirling round the mob, blinding it: grains orbit its body. */
+function sandSwirl(dot: Dot, ax: number, ag: number, ah: number, t: number): void {
+  const frame = Math.floor(t * FPS);
+  for (let i = 0; i < 56; i++) {
+    const h = hash(i, 11, 3);
+    const y = ag - 2 - Math.round(h * (ah + 4));
+    const r = 9 + Math.round(h * 6);
+    const a = hash(i, 12, 5) * 6.28 + frame * 0.35 * (1.2 - h * 0.5);
+    const x = ax + Math.round(Math.cos(a) * r);
+    const yy = y + Math.round(Math.sin(a) * 2);
+    // Grains in front of the mob are brighter than those behind it.
+    dot(x, yy, Math.sin(a) > 0 ? (i % 2 ? SAND[0] : SAND[1]) : SAND[2], i % 4 ? 1 : 2, 1);
   }
 }
