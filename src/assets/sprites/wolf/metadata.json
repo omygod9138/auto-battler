@@ -1,0 +1,59 @@
+{
+  "states": [
+    {
+      "folder": "Idle",
+      "frames": {
+        "rotations": {
+          "east": "Idle/rotations/east.png"
+        },
+        "animations": {
+          "idle": {
+            "east": [
+              "Idle/animations/idle/east/frame_000.png",
+              "Idle/animations/idle/east/frame_001.png",
+              "Idle/animations/idle/east/frame_002.png",
+              "Idle/animations/idle/east/frame_003.png",
+              "Idle/animations/idle/east/frame_004.png"
+            ]
+          },
+          "walk": {
+            "east": [
+              "Idle/animations/walk/east/frame_000.png",
+              "Idle/animations/walk/east/frame_001.png",
+              "Idle/animations/walk/east/frame_002.png",
+              "Idle/animations/walk/east/frame_003.png",
+              "Idle/animations/walk/east/frame_004.png",
+              "Idle/animations/walk/east/frame_005.png",
+              "Idle/animations/walk/east/frame_006.png",
+              "Idle/animations/walk/east/frame_007.png"
+            ]
+          },
+          "attack": {
+            "east": [
+              "Idle/animations/attack/east/frame_000.png",
+              "Idle/animations/attack/east/frame_001.png",
+              "Idle/animations/attack/east/frame_002.png",
+              "Idle/animations/attack/east/frame_003.png",
+              "Idle/animations/attack/east/frame_004.png",
+              "Idle/animations/attack/east/frame_005.png",
+              "Idle/animations/attack/east/frame_006.png",
+              "Idle/animations/attack/east/frame_007.png"
+            ]
+          },
+          "death": {
+            "east": [
+              "Idle/animations/death/east/frame_000.png",
+              "Idle/animations/death/east/frame_001.png",
+              "Idle/animations/death/east/frame_002.png",
+              "Idle/animations/death/east/frame_003.png",
+              "Idle/animations/death/east/frame_004.png",
+              "Idle/animations/death/east/frame_005.png",
+              "Idle/animations/death/east/frame_006.png",
+              "Idle/animations/death/east/frame_007.png"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
