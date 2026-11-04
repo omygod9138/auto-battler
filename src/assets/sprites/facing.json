@@ -1,0 +1,50 @@
+{
+  "drake": {
+    "facing": "right",
+    "hash": "2094551cea327a6c"
+  },
+  "draugr": {
+    "facing": "front",
+    "hash": "bac8b92bb97ccc68"
+  },
+  "jotunn": {
+    "facing": "right",
+    "hash": "3d5bb069d0e69321"
+  },
+  "mage": {
+    "facing": "right",
+    "hash": "d87079c8f6c6576a"
+  },
+  "orc": {
+    "facing": "right",
+    "hash": "bf0d119ff64fc7fe"
+  },
+  "ranger": {
+    "facing": "right",
+    "hash": "7b7ed25bf4190acf"
+  },
+  "skeleton": {
+    "facing": "right",
+    "hash": "9c93fb168f64621c"
+  },
+  "slime": {
+    "facing": "front",
+    "hash": "e71be0a182a77692"
+  },
+  "troll": {
+    "facing": "right",
+    "hash": "67d9bd495be657bb"
+  },
+  "warrior": {
+    "facing": "right",
+    "hash": "aaff8c86d5f7130c"
+  },
+  "wolf": {
+    "facing": "right",
+    "hash": "3d80fea6d204ce34"
+  },
+  "wraith": {
+    "facing": "right",
+    "hash": "6bd89660d24e2294"
+  }
+}
